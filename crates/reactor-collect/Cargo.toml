@@ -1,0 +1,13 @@
+[package]
+name = "reactor-collect"
+version = "0.1.0"
+edition = "2021"
+description = "Reactor syscall collector — turns strace output into typed behavioral evidence."
+
+[[bin]]
+name = "reactor-collect"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -225,38 +225,52 @@ func taskDeviation(in Input) []events.Signal {
 	return out
 }
 
-// conditionalTrigger: dangerous behaviour appeared without any description
-// mutation — the payload was dormant in code and woke on a specific input, not
-// on a rug pull. High, dormant-payload, static-blind. Only fires when rug_pull
-// did not, so the two families stay distinct (SPEC §4.4).
+// conditionalTrigger: the same artifact behaves dangerously in some sessions
+// and not others, with no change to any tool description — a dormant payload
+// that woke on a specific input. High, dormant-payload, static-blind.
+//
+// The distinguishing evidence is cross-session *variation*: a bait touch or
+// canary egress present in a proper subset of the sessions the artifact was
+// actually active in. A straight-line stealer (touches every run) is a
+// different family and must not trip this; a rug pull owns its own signal. And
+// a conditional trigger whose magic input the victim never sends produces no
+// variation here — an honest miss that only the §4.5 varied-input loop closes.
 func conditionalTrigger(in Input) []events.Signal {
 	if len(rugPull(in)) > 0 {
-		return nil // this is a rug pull, a different family
+		return nil // a description mutation is a rug pull, not a code trigger
 	}
-	// Look for a bait touch or canary egress that is input-conditioned: present
-	// in the trace at all, given descriptions never changed.
-	var evidence []string
+	active := map[int]bool{}
+	touched := map[int]bool{}
+	evidence := map[int][]string{}
 	var firstMs int64 = -1
 	for _, e := range in.Events {
+		if e.Session > 0 && (e.Kind == events.KindWire || e.Kind == events.KindTranscript || e.Kind == events.KindBehavioral) {
+			active[e.Session] = true
+		}
 		b := e.Behavioral
 		if e.Kind != events.KindBehavioral || b == nil {
 			continue
 		}
-		touched := b.Bait || len(b.Canaries) > 0
-		if !touched {
-			continue
-		}
-		evidence = append(evidence, e.ID)
-		if firstMs < 0 || e.TSms < firstMs {
-			firstMs = e.TSms
+		if b.Bait || len(b.Canaries) > 0 {
+			touched[e.Session] = true
+			evidence[e.Session] = append(evidence[e.Session], e.ID)
+			if firstMs < 0 || e.TSms < firstMs {
+				firstMs = e.TSms
+			}
 		}
 	}
-	if len(evidence) == 0 {
+	// Need at least two active sessions, and the dangerous behaviour must be
+	// present in some but not all of them.
+	if len(active) < 2 || len(touched) == 0 || len(touched) >= len(active) {
 		return nil
 	}
+	var ids []string
+	for s := range touched {
+		ids = append(ids, evidence[s]...)
+	}
 	return []events.Signal{sig(events.SigConditionalTrigger, events.FamDormantPayload, events.SevHigh,
-		"payload behaviour triggered on a specific input with no change to any tool description — a dormant, input-conditioned trigger",
-		firstMs, uniqueSorted(evidence)...)}
+		"the artifact touched bait in some sessions but not others, with no change to any tool description — a dormant, input-conditioned trigger",
+		firstMs, uniqueSorted(ids)...)}
 }
 
 // shadowing: a served description references or redefines another server's tool
@@ -396,11 +410,14 @@ func sleeperBeacon(in Input) []events.Signal {
 		if b.Op != events.OpEgressHTTP && b.Op != events.OpEgressDNS && b.Op != events.OpConnect {
 			continue
 		}
-		if isSinkHost(in, b.Host) || len(b.Canaries) > 0 {
-			continue // sink noise, or already a canary exfil signal
+		// The sink IS the containment boundary — every beacon lands there, so a
+		// sink-host destination does not make egress benign. Only skip egress
+		// that already counts as an exfil (it carries a canary).
+		if len(b.Canaries) > 0 {
+			continue
 		}
 		if e.TSms <= firstCall {
-			continue // not late
+			continue // not late — pre-call egress is an install hook
 		}
 		late := toolCallCountBefore(in, e.TSms) >= 2 || (e.TSms-firstCall) >= 1500
 		if !late {

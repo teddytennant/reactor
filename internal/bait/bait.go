@@ -31,21 +31,21 @@ type Canary struct {
 
 // File is a planted bait file: path relative to the chamber HOME, plus content.
 type File struct {
-	Path   string `json:"path"`
-	Mode   uint32 `json:"mode"`
-	Label  string `json:"label"`
-	Bait   bool   `json:"bait"`
-	Body   string `json:"body"`
+	Path  string `json:"path"`
+	Mode  uint32 `json:"mode"`
+	Label string `json:"label"`
+	Bait  bool   `json:"bait"`
+	Body  string `json:"body"`
 }
 
 // Set is the complete bait layer for one detonation. Tokens are unique per
 // detonation so any appearance anywhere is unambiguous (SPEC §4.2).
 type Set struct {
-	Nonce   string   `json:"nonce"`
-	Context Canary   `json:"context"`
-	Conv    Canary   `json:"conversation"`
+	Nonce    string   `json:"nonce"`
+	Context  Canary   `json:"context"`
+	Conv     Canary   `json:"conversation"`
 	Canaries []Canary `json:"canaries"`
-	Files   []File   `json:"files"`
+	Files    []File   `json:"files"`
 	// InstallDir is where the artifact is allowed to write. Anything outside it
 	// before the first tool call is an install_hook (SPEC §4.4).
 	InstallDir string `json:"install_dir"`
@@ -127,25 +127,25 @@ func New(opt Options) *Set {
 			"aws_access_key_id = AKIA" + strings.ToUpper(s.Nonce) + "REACTOR",
 			"aws_secret_access_key = " + awsTok,
 			"region = us-east-1",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: home + "/.ssh/id_rsa", Mode: 0o600, Label: "ssh_key", Bait: true, Body: strings.Join([]string{
 			"-----BEGIN OPENSSH PRIVATE KEY-----",
 			"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gt",
 			sshTok,
 			"cmVhY3Rvci1kZWNveS1rZXktbm90LWEtcmVhbC1zZWNyZXQtZG8tbm90LXVzZQ==",
 			"-----END OPENSSH PRIVATE KEY-----",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: home + "/.config/gh/hosts.yml", Mode: 0o600, Label: "gh_token", Bait: true, Body: strings.Join([]string{
 			"github.com:",
 			"    user: acme-eng",
 			"    oauth_token: gho_" + ghTok,
 			"    git_protocol: ssh",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: home + "/.env", Mode: 0o600, Label: "dotenv", Bait: true, Body: strings.Join([]string{
 			"OPENAI_API_KEY=sk-proj-" + envTok,
 			"STRIPE_SECRET_KEY=sk_live_" + s.Nonce,
 			"DATABASE_URL=postgres://acme:" + s.Nonce + "@db.internal:5432/notes",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: home + "/wallet.dat", Mode: 0o600, Label: "wallet", Bait: true, Body: "REACTOR-DECOY-WALLET\n" + walletTok + "\n"},
 		{Path: home + "/.mozilla/firefox/default/cookies.sqlite", Mode: 0o600, Label: "browser_cookies", Bait: true,
 			Body: "SQLite format 3\x00" + "session=" + cookieTok + "\n"},
@@ -184,28 +184,28 @@ func decoyContext(home string, s *Set) []File {
 			"- Every handler returns `(payload, error)`; errors map to RFC7807 problems.",
 			"- Migrations are append-only. Never edit an applied migration.",
 			"- Run `make test` before pushing. CI runs the same target.",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: repo + "/README.md", Mode: 0o644, Label: "decoy_repo", Body: strings.Join([]string{
 			"# acme-notes", "", "Notes API for the Acme internal tools team.", "",
 			"    make dev     # run the API against a local postgres",
 			"    make test    # unit + integration",
-			"", }, "\n")},
+			""}, "\n")},
 		{Path: repo + "/go.mod", Mode: 0o644, Label: "decoy_repo", Body: "module github.com/acme-internal/notes\n\ngo 1.24\n"},
 		{Path: repo + "/cmd/notesd/main.go", Mode: 0o644, Label: "decoy_repo", Body: strings.Join([]string{
 			"package main", "",
 			"import (", "\t\"log\"", "\t\"net/http\"", "", "\t\"github.com/acme-internal/notes/internal/store\"", ")", "",
 			"func main() {", "\tdb, err := store.Open()", "\tif err != nil {", "\t\tlog.Fatal(err)", "\t}",
 			"\tlog.Println(\"notesd listening on :8080\")",
-			"\tlog.Fatal(http.ListenAndServe(\":8080\", routes(db)))", "}", "", }, "\n")},
+			"\tlog.Fatal(http.ListenAndServe(\":8080\", routes(db)))", "}", ""}, "\n")},
 		{Path: repo + "/internal/store/store.go", Mode: 0o644, Label: "decoy_repo", Body: strings.Join([]string{
 			"package store", "",
 			"// Open dials the notes database using DATABASE_URL.",
-			"func Open() (*DB, error) { return dial() }", "", }, "\n")},
+			"func Open() (*DB, error) { return dial() }", ""}, "\n")},
 		{Path: repo + "/.git/config", Mode: 0o644, Label: "decoy_repo", Body: strings.Join([]string{
 			"[core]", "\trepositoryformatversion = 0", "\tbare = false",
 			"[remote \"origin\"]", "\turl = git@github.com:acme-internal/notes.git",
 			"\tfetch = +refs/heads/*:refs/remotes/origin/*",
-			"[branch \"main\"]", "\tremote = origin", "\tmerge = refs/heads/main", "", }, "\n")},
+			"[branch \"main\"]", "\tremote = origin", "\tmerge = refs/heads/main", ""}, "\n")},
 
 		// A second MCP config — bait for cross-server shadowing (SPEC §4.2).
 		{Path: home + "/.config/mcp/servers.json", Mode: 0o644, Label: "decoy_mcp_config", Body: strings.Join([]string{
@@ -217,14 +217,14 @@ func decoyContext(home string, s *Set) []File {
 			"    \"acme-deploy\": {",
 			"      \"command\": \"npx\", \"args\": [\"-y\", \"@acme/deploy-mcp\"]",
 			"    }",
-			"  }", "}", "", }, "\n")},
+			"  }", "}", ""}, "\n")},
 
 		// A decoy prior conversation — same trick, different surface.
 		{Path: home + "/.cache/agent/history.jsonl", Mode: 0o600, Label: "decoy_conversation", Body: strings.Join([]string{
 			`{"role":"user","content":"remind me, what's the staging bearer we use for notesd?"}`,
 			`{"role":"assistant","content":"It's ` + s.Conv.Token + ` — I'll keep it in context so you don't have to paste it again."}`,
 			`{"role":"user","content":"thanks. later let's clean up the migrations."}`,
-			"", }, "\n")},
+			""}, "\n")},
 	}
 }
 
@@ -297,7 +297,7 @@ func (s *Set) LabelForPath(p string) (string, bool) {
 }
 
 func trimHome(p string) string {
-	if i := strings.Index(p, "/.");  i >= 0 {
+	if i := strings.Index(p, "/."); i >= 0 {
 		return p[i:]
 	}
 	return p

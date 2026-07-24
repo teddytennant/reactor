@@ -30,13 +30,13 @@ import (
 
 // Config tunes the engine.
 type Config struct {
-	BinDir        string
-	ZooPath       string
+	BinDir          string
+	ZooPath         string
 	DefaultSessions int
-	Deterministic bool
-	Seed          string
-	VictimBackend string // "", "auto", "xai", "sglang", "sim"
-	Task          string
+	Deterministic   bool
+	Seed            string
+	VictimBackend   string // "", "auto", "xai", "sglang", "sim"
+	Task            string
 }
 
 // Engine is the control plane.
@@ -53,7 +53,7 @@ type Engine struct {
 }
 
 // bins are the paths to the chamber component binaries.
-type bins struct{ victim, wire, sink string }
+type bins struct{ victim, wire, sink, collect string }
 
 // Detonation is one run's live state and its report.
 type Detonation struct {
@@ -115,6 +115,9 @@ func (e *Engine) Drivers() []map[string]any {
 
 // AnalystName reports which analyst will write verdicts.
 func (e *Engine) AnalystName() string {
+	if analystForced() {
+		return "deterministic"
+	}
 	if _, ok := oai.FromEnv(); ok {
 		return firstEnv("ANALYST_MODEL", "VICTIM_MODEL", "grok-4.5")
 	}
@@ -305,10 +308,21 @@ type zooEntry struct {
 // ---- helpers ----
 
 func (e *Engine) newAnalyst(steps analyst.StepSink) analyst.Analyst {
+	if analystForced() {
+		return analyst.Deterministic{Steps: steps}
+	}
 	if client, ok := oai.FromEnv(); ok {
 		return analyst.Grok{Client: client, Model: client.Model, Steps: steps}
 	}
 	return analyst.Deterministic{Steps: steps}
+}
+
+// analystForced lets REACTOR_ANALYST=deterministic|none pin the offline
+// reasoner — used by the eval harness and fast test loops so a scorecard run
+// doesn't spend a hosted call per artifact.
+func analystForced() bool {
+	v := strings.ToLower(os.Getenv("REACTOR_ANALYST"))
+	return v == "deterministic" || v == "none" || v == "offline"
 }
 
 func (e *Engine) locateBins(binDir string) error {
@@ -319,20 +333,31 @@ func (e *Engine) locateBins(binDir string) error {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Dir(exe))
 	}
-	find := func(name string) string {
-		for _, dir := range candidates {
-			if dir == "" {
-				continue
-			}
-			p := filepath.Join(dir, name)
-			if st, err := os.Stat(p); err == nil && !st.IsDir() {
-				abs, _ := filepath.Abs(p)
-				return abs
+	// Look for the Rust release binaries too, and prefer them for the sink and
+	// collector (SPEC §12.2: the sink is Rust; the syscall collector is a hot
+	// loop over untrusted trace output). The Go sink remains a fallback.
+	candidates = append(candidates, "crates/target/release", "target/release")
+	find := func(names ...string) string {
+		for _, name := range names {
+			for _, dir := range candidates {
+				if dir == "" {
+					continue
+				}
+				p := filepath.Join(dir, name)
+				if st, err := os.Stat(p); err == nil && !st.IsDir() {
+					abs, _ := filepath.Abs(p)
+					return abs
+				}
 			}
 		}
 		return ""
 	}
-	e.bins = bins{victim: find("victim"), wire: find("wire"), sink: find("sink")}
+	e.bins = bins{
+		victim:  find("victim"),
+		wire:    find("wire"),
+		sink:    find("reactor-sink", "sink"), // Rust sink preferred, Go fallback
+		collect: find("reactor-collect"),      // Rust-only; optional
+	}
 	var missing []string
 	for name, p := range map[string]string{"victim": e.bins.victim, "wire": e.bins.wire, "sink": e.bins.sink} {
 		if p == "" {

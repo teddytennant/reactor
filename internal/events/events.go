@@ -45,15 +45,15 @@ const (
 
 // Artifact is the thing under test (SPEC §6).
 type Artifact struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"` // mcp_server | skill | zip
-	Name   string `json:"name"`
-	Source string `json:"source"`           // e.g. "npx -y @acme/notes-mcp" or a path
-	Args   []string `json:"args,omitempty"` // extra argv for the server command
+	ID     string            `json:"id"`
+	Kind   string            `json:"kind"` // mcp_server | skill | zip
+	Name   string            `json:"name"`
+	Source string            `json:"source"`         // e.g. "npx -y @acme/notes-mcp" or a path
+	Args   []string          `json:"args,omitempty"` // extra argv for the server command
 	Env    map[string]string `json:"env,omitempty"`
-	SHA256 string `json:"sha256"`
-	Label  string `json:"label,omitempty"` // ground truth, eval only — never shown to the analyst
-	Note   string `json:"note,omitempty"`  // human blurb for the UI card
+	SHA256 string            `json:"sha256"`
+	Label  string            `json:"label,omitempty"` // ground truth, eval only — never shown to the analyst
+	Note   string            `json:"note,omitempty"`  // human blurb for the UI card
 }
 
 // Artifact kinds.
@@ -111,16 +111,16 @@ const (
 
 // ChamberInfo is what the UI shows in the chamber header strip.
 type ChamberInfo struct {
-	Driver     string `json:"driver"`      // "daytona" | "local"
-	SandboxID  string `json:"sandbox_id"`  // ws_7fa2
-	GPU        string `json:"gpu"`         // "RTX PRO 6000"
-	Model      string `json:"model"`       // Qwen/Qwen3.6-27B-FP8
-	Revision   string `json:"revision"`    // pinned HF sha
-	Served     string `json:"served"`      // sglang | sim
-	ToolParser string `json:"tool_call_parser"`
+	Driver     string  `json:"driver"`     // "daytona" | "local"
+	SandboxID  string  `json:"sandbox_id"` // ws_7fa2
+	GPU        string  `json:"gpu"`        // "RTX PRO 6000"
+	Model      string  `json:"model"`      // Qwen/Qwen3.6-27B-FP8
+	Revision   string  `json:"revision"`   // pinned HF sha
+	Served     string  `json:"served"`     // sglang | sim
+	ToolParser string  `json:"tool_call_parser"`
 	Temp       float64 `json:"temp"`
-	Seed       int    `json:"seed"`
-	Simulated  bool   `json:"simulated"` // true when no GPU weights are behind it
+	Seed       int     `json:"seed"`
+	Simulated  bool    `json:"simulated"` // true when no GPU weights are behind it
 }
 
 // ScanLine is one line of the static-baseline column (SPEC §7 static-blind).
@@ -194,7 +194,7 @@ const (
 
 // BehavioralEvent covers syscall / filesystem / egress collectors (SPEC §4.3).
 type BehavioralEvent struct {
-	Op     string `json:"op"` // see Op* consts
+	Op     string `json:"op"`               // see Op* consts
 	Source string `json:"source,omitempty"` // strace | inotify | sink | dns
 
 	Path      string `json:"path,omitempty"`
@@ -202,15 +202,15 @@ type BehavioralEvent struct {
 	BaitLabel string `json:"bait_label,omitempty"` // aws_credentials, ssh_key, ...
 	InInstall bool   `json:"in_install_dir,omitempty"`
 
-	Host   string `json:"host,omitempty"`
-	Port   int    `json:"port,omitempty"`
-	Method string `json:"method,omitempty"`
+	Host    string `json:"host,omitempty"`
+	Port    int    `json:"port,omitempty"`
+	Method  string `json:"method,omitempty"`
 	URLPath string `json:"url_path,omitempty"`
 
-	Proc     string   `json:"proc,omitempty"`
-	PID      int      `json:"pid,omitempty"`
-	ArgvLen  int      `json:"argv_len,omitempty"`
-	ArgvHash string   `json:"argv_hash,omitempty"`
+	Proc      string   `json:"proc,omitempty"`
+	PID       int      `json:"pid,omitempty"`
+	ArgvLen   int      `json:"argv_len,omitempty"`
+	ArgvHash  string   `json:"argv_hash,omitempty"`
 	ArgvHosts []string `json:"argv_hosts,omitempty"`
 	ArgvPaths []string `json:"argv_paths,omitempty"`
 
@@ -301,28 +301,28 @@ type AnalystStep struct {
 
 // Verdict is the shipped output (SPEC §6). evidence[] MUST reference event IDs.
 type Verdict struct {
-	ArtifactID     string   `json:"artifact_id"`
-	Label          string   `json:"label"`
-	Family         string   `json:"family"`
-	Severity       string   `json:"severity"`
-	Explanation    string   `json:"explanation"`
-	Evidence       []string `json:"evidence"`
-	Sessions       int      `json:"sessions"`
-	TimeToVerdictMs int64   `json:"time_to_verdict_ms"`
-	CostUSD        float64  `json:"cost_usd"`
-	Analyst        string   `json:"analyst,omitempty"`  // model id that wrote it
-	Fallback       bool     `json:"fallback,omitempty"` // deterministic verdict, no hosted analyst
+	ArtifactID      string   `json:"artifact_id"`
+	Label           string   `json:"label"`
+	Family          string   `json:"family"`
+	Severity        string   `json:"severity"`
+	Explanation     string   `json:"explanation"`
+	Evidence        []string `json:"evidence"`
+	Sessions        int      `json:"sessions"`
+	TimeToVerdictMs int64    `json:"time_to_verdict_ms"`
+	CostUSD         float64  `json:"cost_usd"`
+	Analyst         string   `json:"analyst,omitempty"`  // model id that wrote it
+	Fallback        bool     `json:"fallback,omitempty"` // deterministic verdict, no hosted analyst
 }
 
 // VictimInfo pins exactly what ate the poison (SPEC §5.1).
 type VictimInfo struct {
-	Model         string  `json:"model"`
-	Revision      string  `json:"revision"`
-	Served        string  `json:"served"`
-	ToolCallParser string `json:"tool_call_parser"`
-	Temp          float64 `json:"temp"`
-	Seed          int     `json:"seed"`
-	Simulated     bool    `json:"simulated,omitempty"`
+	Model          string  `json:"model"`
+	Revision       string  `json:"revision"`
+	Served         string  `json:"served"`
+	ToolCallParser string  `json:"tool_call_parser"`
+	Temp           float64 `json:"temp"`
+	Seed           int     `json:"seed"`
+	Simulated      bool    `json:"simulated,omitempty"`
 }
 
 // BaitReport summarises what the artifact touched.
@@ -334,32 +334,32 @@ type BaitReport struct {
 
 // DetonationReport is the full record for one artifact (SPEC §6).
 type DetonationReport struct {
-	DetonationID string     `json:"detonation_id"`
-	ArtifactID   string     `json:"artifact_id"`
-	Artifact     *Artifact  `json:"artifact,omitempty"`
-	SandboxID    string     `json:"sandbox_id"`
-	Driver       string     `json:"driver"`
-	Sessions     int        `json:"sessions"`
-	Network      bool       `json:"network"`
-	Victim       VictimInfo `json:"victim"`
-	Events       []Event    `json:"events"`
-	Signals      []Signal   `json:"signals"`
-	Bait         BaitReport `json:"bait"`
-	Verdict      *Verdict   `json:"verdict,omitempty"`
+	DetonationID string      `json:"detonation_id"`
+	ArtifactID   string      `json:"artifact_id"`
+	Artifact     *Artifact   `json:"artifact,omitempty"`
+	SandboxID    string      `json:"sandbox_id"`
+	Driver       string      `json:"driver"`
+	Sessions     int         `json:"sessions"`
+	Network      bool        `json:"network"`
+	Victim       VictimInfo  `json:"victim"`
+	Events       []Event     `json:"events"`
+	Signals      []Signal    `json:"signals"`
+	Bait         BaitReport  `json:"bait"`
+	Verdict      *Verdict    `json:"verdict,omitempty"`
 	Scan         *ScanResult `json:"scan,omitempty"`
-	StartedMs    int64      `json:"started_ms"`
-	EndedMs      int64      `json:"ended_ms"`
-	Error        string     `json:"error,omitempty"`
+	StartedMs    int64       `json:"started_ms"`
+	EndedMs      int64       `json:"ended_ms"`
+	Error        string      `json:"error,omitempty"`
 }
 
 // ScanResult is the static baseline for the left column / scorecard.
 type ScanResult struct {
-	Tool      string   `json:"tool"`
-	Available bool     `json:"available"`
-	Status    string   `json:"status"` // clean | issues | error | unavailable
-	Issues    int      `json:"issues"`
-	Findings  []string `json:"findings,omitempty"`
-	DurationMs int64   `json:"duration_ms"`
+	Tool       string   `json:"tool"`
+	Available  bool     `json:"available"`
+	Status     string   `json:"status"` // clean | issues | error | unavailable
+	Issues     int      `json:"issues"`
+	Findings   []string `json:"findings,omitempty"`
+	DurationMs int64    `json:"duration_ms"`
 }
 
 // ---------------------------------------------------------------------------

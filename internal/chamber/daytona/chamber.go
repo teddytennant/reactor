@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,9 +21,11 @@ import (
 // Chamber is one live Daytona sandbox. Every method maps onto the sandbox
 // toolbox API; nothing runs on the host.
 type Chamber struct {
-	d    *Driver
-	id   string
-	home string
+	d          *Driver
+	id         string
+	home       string
+	proxyURL   string // toolbox proxy base (exec + fs live here, not the control API)
+	proxyToken string // proxy API key (control-plane key is rejected by the proxy)
 
 	mu      sync.Mutex
 	started []string // pid files of background processes, killed on destroy
@@ -61,7 +65,7 @@ func (c *Chamber) exec(ctx context.Context, cmd, cwd string, env map[string]stri
 		body["env"] = env
 	}
 	var out execResult
-	err := c.d.do(ctx, "POST", "/toolbox/"+c.id+"/toolbox/process/execute", body, &out)
+	err := c.proxyDo(ctx, "POST", "/process/execute", body, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +73,55 @@ func (c *Chamber) exec(ctx context.Context, cmd, cwd string, env map[string]stri
 		out.Stdout = out.Result
 	}
 	return &out, nil
+}
+
+// proxyDo calls the sandbox toolbox through its proxy URL. The proxy uses a
+// proxy-specific API key and routes to the sandbox by id header; if it rejects
+// the token, the error names the fix (set REACTOR_DAYTONA_PROXY_TOKEN).
+func (c *Chamber) proxyDo(ctx context.Context, method, path string, in, out any) error {
+	if c.proxyURL == "" {
+		return fmt.Errorf("no toolbox proxy url for sandbox %s", c.id)
+	}
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = strings.NewReader(string(b))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.proxyURL, "/")+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.proxyToken)
+	req.Header.Set("X-Daytona-Sandbox-Id", c.id)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("toolbox proxy rejected the token; set REACTOR_DAYTONA_PROXY_TOKEN (region proxy API key): %s", strings.TrimSpace(string(raw)))
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, truncateStr(string(raw), 200))
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // shellQuote makes a value safe inside single quotes for the remote shell.

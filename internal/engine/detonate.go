@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -139,8 +140,8 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 
 	logDir := filepath.Join(home, "logs")
 	sinkHandle, err := ch.Start(ctx, chamber.ExecOpts{
-		Cmd: []string{e.bins.sink, "--http", fmt.Sprintf("127.0.0.1:%d", sinkPort), "--dns", "", "--log-dir", logDir, "--canaries", canaryPath},
-		Env: map[string]string{"REACTOR_LOG_DIR": logDir, "REACTOR_CANARY_FILE": canaryPath},
+		Cmd:        []string{e.bins.sink, "--http", fmt.Sprintf("127.0.0.1:%d", sinkPort), "--dns", "", "--log-dir", logDir, "--canaries", canaryPath},
+		Env:        map[string]string{"REACTOR_LOG_DIR": logDir, "REACTOR_CANARY_FILE": canaryPath},
 		StdoutPath: "logs/sink.out", StderrPath: "logs/sink.err",
 	})
 	if err != nil {
@@ -153,7 +154,7 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 
 	// Tail the chamber's collector logs and republish onto the bus.
 	tctx, tcancel := context.WithCancel(ctx)
-	e.tailLogs(tctx, det, ch, []string{"logs/wire.jsonl", "logs/transcript.jsonl", "logs/sink.jsonl"})
+	e.tailLogs(tctx, det, ch, []string{"logs/wire.jsonl", "logs/transcript.jsonl", "logs/sink.jsonl", "logs/behavioral.jsonl"})
 
 	// Run the sessions. A rug pull only exists across repetition, so we always
 	// run N and let the oracle diff descriptions (SPEC §4.5).
@@ -208,16 +209,16 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	victimArgv = append(victimArgv, artArgv...)
 
 	env := map[string]string{
-		"REACTOR_SESSION":              strconv.Itoa(session),
-		"REACTOR_DETONATION":           det.Report.DetonationID,
-		"REACTOR_LOG_DIR":              logDir,
-		"REACTOR_CANARY_FILE":          canaryPath,
-		"REACTOR_CANARY_CONTEXT":       b.Context.Token,
-		"REACTOR_CANARY_CONVERSATION":  b.Conv.Token,
-		"REACTOR_TASK":                 e.cfg.Task,
-		"REACTOR_SINK_HTTP":            sinkURL,
-		"REACTOR_STATE_DIR":            filepath.Join(ch.Home(), ".reactor", "state"),
-		"REACTOR_VICTIM_SEED":          "7",
+		"REACTOR_SESSION":             strconv.Itoa(session),
+		"REACTOR_DETONATION":          det.Report.DetonationID,
+		"REACTOR_LOG_DIR":             logDir,
+		"REACTOR_CANARY_FILE":         canaryPath,
+		"REACTOR_CANARY_CONTEXT":      b.Context.Token,
+		"REACTOR_CANARY_CONVERSATION": b.Conv.Token,
+		"REACTOR_TASK":                e.cfg.Task,
+		"REACTOR_SINK_HTTP":           sinkURL,
+		"REACTOR_STATE_DIR":           filepath.Join(ch.Home(), ".reactor", "state"),
+		"REACTOR_VICTIM_SEED":         "7",
 	}
 	if e.cfg.VictimBackend != "" {
 		env["REACTOR_VICTIM_BACKEND"] = e.cfg.VictimBackend
@@ -231,12 +232,11 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 		env["REACTOR_ARTIFACT_PROXY"] = sinkURL
 	}
 
-	// Skills and zips are detonated differently: run their install/entrypoint
-	// under the collector, then still let the victim use the MCP surface if any.
+	// A skill or zip has no MCP surface for the victim to drive; it detonates by
+	// running its install/entrypoint under the syscall collector, and its
+	// shipped text is scanned for analyzer-targeted injection.
 	if art.Kind != events.KindMCPServer {
-		if err := e.detonateNonMCP(ctx, ch, det, art, session, installDir, env); err != nil {
-			return err
-		}
+		return e.detonateNonMCP(ctx, ch, det, art, session, installDir, env)
 	}
 
 	res, err := ch.Exec(ctx, chamber.ExecOpts{
@@ -252,24 +252,84 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	return nil
 }
 
-// detonateNonMCP runs a skill/zip artifact's install or entrypoint under the
-// syscall collector so install hooks and credential sweeps become evidence.
+// detonateNonMCP runs a skill/zip artifact's install and entrypoint under
+// strace, then parses the trace with reactor-collect into behavioral evidence
+// (install hooks, credential sweeps), and scans its shipped text for analyst
+// injection. Only session 1 does the work; later sessions are no-ops so the
+// rug-pull/repetition machinery does not apply to a one-shot payload.
 func (e *Engine) detonateNonMCP(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, session int, installDir string, env map[string]string) error {
-	install := art.Env["_install"]
-	if install == "" && art.Kind == events.KindZip {
-		install = art.Source
-	}
-	if install == "" {
+	if session > 1 {
 		return nil
 	}
-	_, err := ch.Exec(ctx, chamber.ExecOpts{
-		Cmd: append([]string{"sh", "-c"}, install), Env: env, Dir: installDir,
-		Trace: true, TracePath: fmt.Sprintf("logs/strace.%d.log", session),
-		Timeout: 90 * time.Second,
-		StdoutPath: fmt.Sprintf("logs/artifact.%d.out", session),
-		StderrPath: fmt.Sprintf("logs/artifact.%d.err", session),
+	e.scanArtifactText(ctx, ch, det, art, installDir, session)
+
+	steps := []string{}
+	if install := art.Env["_install"]; install != "" {
+		steps = append(steps, install)
+	}
+	if art.Source != "" {
+		steps = append(steps, art.Source)
+	}
+	tracePath := fmt.Sprintf("logs/strace.%d.log", session)
+	for i, step := range steps {
+		_, err := ch.Exec(ctx, chamber.ExecOpts{
+			Cmd: []string{"sh", "-c", step}, Env: env, Dir: installDir,
+			Trace: true, TracePath: tracePath, Timeout: 90 * time.Second,
+			StdoutPath: fmt.Sprintf("logs/artifact.%d.%d.out", session, i),
+			StderrPath: fmt.Sprintf("logs/artifact.%d.%d.err", session, i),
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Parse the trace into typed behavioral events (SPEC §4.3).
+	if e.bins.collect != "" {
+		baitJSON := filepath.Join(ch.Home(), ".reactor", "bait.json")
+		_, _ = ch.Exec(ctx, chamber.ExecOpts{
+			Cmd: []string{e.bins.collect,
+				"--strace", filepath.Join(ch.Home(), tracePath),
+				"--bait", baitJSON,
+				"--install-dir", installDir,
+				"--home", ch.Home(),
+				"--out", filepath.Join(ch.Home(), "logs", "behavioral.jsonl"),
+				"--session", strconv.Itoa(session),
+			},
+			Timeout: 30 * time.Second,
+		})
+	}
+	return nil
+}
+
+// scanArtifactText surfaces analyzer-targeted injection in a skill/zip's shipped
+// text as behavioral evidence. The oracle matches on the preview and cites the
+// event id; the raw text is stripped before the analyst ever sees it.
+func (e *Engine) scanArtifactText(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, installDir string, session int) {
+	src := art.Env["_dir"]
+	if src == "" {
+		return
+	}
+	filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || info.Size() > 256<<10 {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(p)) {
+		case ".md", ".txt", ".mjs", ".js", ".ts", ".sh", ".json", ".yml", ".yaml", ".py":
+		default:
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(src, p)
+		det.emit(e.bus, events.Event{Kind: events.KindBehavioral, Session: session, TSms: nowMs(),
+			Behavioral: &events.BehavioralEvent{
+				Op: events.OpFileRead, Source: "artifact-content", InInstall: true,
+				Path: filepath.Join(installDir, rel), Preview: truncate(string(data), 8192),
+			}})
+		return nil
 	})
-	return err
 }
 
 // analyze runs the oracles and the analyst, emitting signals then the verdict.
@@ -343,7 +403,22 @@ func plantBait(ctx context.Context, ch chamber.Chamber, b *bait.Set) error {
 		toks = append(toks, tok{c.Token, c.Kind, c.Label})
 	}
 	data, _ := json.Marshal(toks)
-	return ch.WriteFile(ctx, filepath.Join(ch.Home(), ".reactor", "canaries.json"), 0o644, data)
+	if err := ch.WriteFile(ctx, filepath.Join(ch.Home(), ".reactor", "canaries.json"), 0o644, data); err != nil {
+		return err
+	}
+	// Bait path table for the syscall collector (reactor-collect --bait).
+	type bp struct {
+		Path  string `json:"path"`
+		Label string `json:"label"`
+	}
+	var paths []bp
+	for _, f := range b.Files {
+		if f.Bait {
+			paths = append(paths, bp{f.Path, f.Label})
+		}
+	}
+	bpData, _ := json.Marshal(paths)
+	return ch.WriteFile(ctx, filepath.Join(ch.Home(), ".reactor", "bait.json"), 0o644, bpData)
 }
 
 // installArtifact copies the artifact into the chamber and returns the argv that
@@ -436,6 +511,13 @@ func keysOf(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func waitForSink(port int) {

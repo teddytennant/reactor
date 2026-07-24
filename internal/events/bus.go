@@ -10,13 +10,13 @@ import (
 // behind are dropped rather than allowed to stall a detonation — the chamber
 // clock is the thing we must not distort.
 type Bus struct {
-	mu       sync.RWMutex
-	subs     map[int]chan Event
-	next     int
-	history  []Event
-	maxHist  int
-	closed   bool
-	onDrop   func(sub int)
+	mu      sync.RWMutex
+	subs    map[int]chan Event
+	next    int
+	history []Event
+	maxHist int
+	closed  bool
+	onDrop  func(sub int)
 }
 
 // NewBus returns a bus that replays up to maxHistory events to late joiners.

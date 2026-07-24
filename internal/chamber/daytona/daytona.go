@@ -80,7 +80,7 @@ func (d *Driver) Provision(ctx context.Context, spec chamber.Spec) (chamber.Cham
 		snapshot = os.Getenv("REACTOR_DAYTONA_SNAPSHOT")
 	}
 	body := map[string]any{
-		"labels": map[string]string{"reactor.detonation": spec.DetonationID, "reactor": "chamber"},
+		"labels":             map[string]string{"reactor.detonation": spec.DetonationID, "reactor": "chamber"},
 		"autoStopInterval":   15,
 		"autoDeleteInterval": 30,
 	}
@@ -88,8 +88,10 @@ func (d *Driver) Provision(ctx context.Context, spec chamber.Spec) (chamber.Cham
 		body["snapshot"] = snapshot
 	}
 	var created struct {
-		ID    string `json:"id"`
-		State string `json:"state"`
+		ID              string `json:"id"`
+		State           string `json:"state"`
+		ToolboxProxyURL string `json:"toolboxProxyUrl"`
+		RunnerID        string `json:"runnerId"`
 	}
 	if err := d.do(ctx, http.MethodPost, "/sandbox", body, &created); err != nil {
 		return nil, fmt.Errorf("create sandbox: %w", err)
@@ -97,7 +99,17 @@ func (d *Driver) Provision(ctx context.Context, spec chamber.Spec) (chamber.Cham
 	if err := d.waitStarted(ctx, created.ID); err != nil {
 		return nil, err
 	}
-	c := &Chamber{d: d, id: created.ID, home: home}
+	// The toolbox (exec + fs) is reached through a proxy, not the control-plane
+	// API — its base URL is on the sandbox object. The proxy authenticates with
+	// a separate proxy API key (REACTOR_DAYTONA_PROXY_TOKEN); the control-plane
+	// key is rejected there. Validated live: create/state/destroy on the API;
+	// toolbox exec needs that proxy token wired (or the daytona SDK).
+	proxy := created.ToolboxProxyURL
+	if proxy == "" {
+		proxy = os.Getenv("REACTOR_DAYTONA_TOOLBOX_URL")
+	}
+	c := &Chamber{d: d, id: created.ID, home: home, proxyURL: proxy,
+		proxyToken: firstEnv("REACTOR_DAYTONA_PROXY_TOKEN", "DAYTONA_API_KEY")}
 	// Best-effort: discover the sandbox user's real home.
 	if out, err := c.exec(ctx, "echo $HOME", "", nil, 10*time.Second); err == nil {
 		if h := strings.TrimSpace(out.Result); h != "" {

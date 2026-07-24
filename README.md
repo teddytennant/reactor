@@ -6,6 +6,29 @@ Static scanners read tool descriptions. Reactor installs the artifact in a dispo
 
 **Static scanners read the label. We watch it behave.**
 
+## Prior art, verified (2026-07-24)
+
+`mcp-scan` on PyPI now redirects to **`snyk-agent-scan`** ("Agent supply chain
+security scanner") — the ex-Invariant Labs tool Snyk acquired. Someone *does*
+scan MCP servers; we cite them by name. They are static (they read tool
+descriptions); Reactor is the runtime layer their own docs tell you to build. The
+gap, as a number, is the **static-blind rate**.
+
+## Measured (not claimed) — `make eval`
+
+Offline scorecard over the authored zoo (sim victim + deterministic analyst):
+
+```
+  Detection rate         6/7  (86%)     one honest miss: the conditional trigger,
+  False-quarantine rate  0/3  (0%)      whose magic input a benign victim never
+  Static-blind rate      5/6  (83%)     sends (needs the §4.5 varied-input loop).
+  Mean time-to-verdict   ~12s
+```
+
+The money shot runs with a **real** Fireworks `gpt-oss-120b` victim (it attaches
+`~/.env` *and* leaks the system-prompt canary on session 4) and **real** Kimi K2.6
+writing an evidence-cited verdict — not a simulation.
+
 ## How it works
 
 ```
@@ -15,11 +38,18 @@ host (trusted)
         ▼
   chamber (disposable)
      bait creds + decoy repo + canaries
-     sink        127.0.0.1  http + dns     -> logs/sink.jsonl
+     reactor-sink (Rust/axum)   127.0.0.1  http + dns   -> logs/sink.jsonl
      victim  ──stdio──> wire ──stdio──> artifact
         │                 │                 (strace-wrapped)
-        └─ transcript     └─ wire log        -> strace.log
+        └─ transcript     └─ wire log
+     reactor-collect (Rust)   strace parse  -> logs/behavioral.jsonl
 ```
+
+**Rust where it pays (SPEC §12.2):** `crates/reactor-sink` (axum egress sink on
+the hot path, parsing untrusted bodies — the spec-canonical component) and
+`crates/reactor-collect` (the syscall collector: a hot loop over megabytes of
+adversarially-shaped strace output, where memory safety is the point). Go owns
+the orchestrator, victim, wire proxy and oracles.
 
 1. Plant bait files and canary tokens (including a system-prompt canary that is never on disk).
 2. Install the artifact inside the chamber only.
@@ -37,6 +67,9 @@ The money shot is `notes-mcp`: clean for three `tools/list` serves, then a 47-by
 |---|---|
 | `cmd/reactor` | Engine CLI: `serve`, `detonate`, `list` |
 | `cmd/victim`, `cmd/wire`, `cmd/sink` | Chamber binaries the engine shells into the sandbox |
+| `cmd/reactor-tui` | Backup demo surface (bubbletea): same SSE stream, two columns |
+| `cmd/mutate` | Offline red-team generator → escape rate (`eval/redteam.json`) |
+| `crates/reactor-sink`, `crates/reactor-collect` | Rust: egress sink + syscall collector |
 | `internal/engine` | Control plane, HTTP + SSE API |
 | `internal/events` | Typed event contract and analyst redaction boundary |
 | `internal/oracle` | Deterministic signal oracles |

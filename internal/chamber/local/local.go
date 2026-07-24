@@ -37,7 +37,9 @@ func (*Driver) Name() string { return "local" }
 func (*Driver) Available() bool { return true }
 
 // Why implements chamber.Driver.
-func (*Driver) Why() string { return "process-isolated throwaway tree on the host (no GPU, best-effort egress containment)" }
+func (*Driver) Why() string {
+	return "process-isolated throwaway tree on the host (no GPU, best-effort egress containment)"
+}
 
 // Provision creates the chamber directory tree.
 func (*Driver) Provision(ctx context.Context, spec chamber.Spec) (chamber.Chamber, error) {

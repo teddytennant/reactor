@@ -187,8 +187,8 @@ func dnsAnswer(req []byte) []byte {
 	for i < len(req) && req[i] != 0 {
 		i += int(req[i]) + 1
 	}
-	i++       // null label
-	i += 4    // qtype + qclass
+	i++    // null label
+	i += 4 // qtype + qclass
 	if i > len(req) {
 		return nil
 	}

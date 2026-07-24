@@ -238,21 +238,21 @@ func (e *Engine) liveScorecard() map[string]any {
 		meanTTV = ttvSum / ttvN
 	}
 	return map[string]any{
-		"source":                "live",
-		"detonations":           len(reports),
-		"malicious_total":       malTotal,
-		"malicious_caught":      malCaught,
-		"detection_rate":        detection,
-		"benign_total":          benTotal,
-		"false_blocks":          falseBlocks,
-		"false_quarantine_rate": fqr,
-		"catches":               caught,
-		"static_blind_catches":  staticBlind,
-		"static_blind_rate":     blindRate,
+		"source":                  "live",
+		"detonations":             len(reports),
+		"malicious_total":         malTotal,
+		"malicious_caught":        malCaught,
+		"detection_rate":          detection,
+		"benign_total":            benTotal,
+		"false_blocks":            falseBlocks,
+		"false_quarantine_rate":   fqr,
+		"catches":                 caught,
+		"static_blind_catches":    staticBlind,
+		"static_blind_rate":       blindRate,
 		"mean_time_to_verdict_ms": meanTTV,
-		"cost_usd_total":        costSum,
-		"signals_by_type":       byType,
-		"generated_ms":          nowMs(),
+		"cost_usd_total":          costSum,
+		"signals_by_type":         byType,
+		"generated_ms":            nowMs(),
 	}
 }
 

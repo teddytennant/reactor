@@ -39,11 +39,11 @@ var needles = []string{
 
 // Options configure a scan.
 type Options struct {
-	Name     string            // artifact display name
-	Argv     []string          // command to launch the server
-	Dir      string            // working dir
-	Env      map[string]string // extra env
-	Emit     func(events.ScanLine)
+	Name string            // artifact display name
+	Argv []string          // command to launch the server
+	Dir  string            // working dir
+	Env  map[string]string // extra env
+	Emit func(events.ScanLine)
 }
 
 // Run performs the static baseline: one handshake, one tools/list, pattern match.
