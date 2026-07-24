@@ -22,9 +22,9 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    // Must track --bg in globals.css: dark #090B10 / light #F6F8FA.
-    { media: "(prefers-color-scheme: dark)", color: "#090b10" },
-    { media: "(prefers-color-scheme: light)", color: "#f6f8fa" },
+    // Must track --bg in globals.css: dark #1D1B18 / light #F8F5F1.
+    { media: "(prefers-color-scheme: dark)", color: "#1d1b18" },
+    { media: "(prefers-color-scheme: light)", color: "#f8f5f1" },
   ],
 };
 

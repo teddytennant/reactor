@@ -16,7 +16,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/reactor-sec/reactor/internal/dotenv"
@@ -114,7 +116,21 @@ func serve(e *engine.Engine, addr string) {
 	}
 	log.Printf("zoo: %d artifacts", len(e.Zoo()))
 	srv := &http.Server{Addr: addr, Handler: e.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	if err := srv.ListenAndServe(); err != nil {
+
+	// Ctrl-C during a demo must not leave staged uploads and clones behind, so
+	// the signal is caught and the engine gets to close rather than being shot.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	err := srv.ListenAndServe()
+	e.Close()
+	if err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }

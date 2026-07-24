@@ -18,6 +18,7 @@ func (e *Engine) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", e.handleHealth)
 	mux.HandleFunc("/api/artifacts", e.handleArtifacts)
+	mux.HandleFunc("/api/upload", e.handleUpload)
 	mux.HandleFunc("/api/detonate", e.handleDetonate)
 	mux.HandleFunc("/api/detonations", e.handleDetonations)
 	mux.HandleFunc("/api/detonations/", e.handleDetonation)
@@ -68,9 +69,11 @@ func (e *Engine) handleDetonate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Ingest failures carry their own status (413 oversize, 415 unsupported
+	// archive, 504 clone timeout); everything else stays the 400 it always was.
 	id, err := e.Detonate(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpFail(w, err)
 		return
 	}
 	writeJSON(w, map[string]string{"detonation_id": id})

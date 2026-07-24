@@ -37,19 +37,52 @@ type Config struct {
 	Seed            string
 	VictimBackend   string // "", "auto", "xai", "sglang", "sim"
 	Task            string
+
+	// Ingest (see ingest.go). Every one of these is a ceiling on attacker-chosen
+	// bytes arriving before any chamber exists, so all of them have a default
+	// and none of them may be zero at run time.
+	WorkDir         string        // where uploads and clones are staged
+	MaxUploadBytes  int64         // one uploaded archive
+	MaxExtractBytes int64         // what an archive or a clone may become on disk
+	MaxExtractFiles int           // how many files it may become
+	MaxCloneBytes   int64         // a clone is killed the moment it crosses this
+	CloneTimeout    time.Duration // wall clock for one `git clone`
+	UploadTTL       time.Duration // how long an unclaimed upload is kept
+	AllowLocalRepos bool          // permit file:// and private hosts (dev only)
 }
+
+// Ingest defaults. 64 MiB is a generous MCP server or skill bundle and a
+// miserly memory-exhaustion budget; the unpack ceilings are four times that
+// because an archive legitimately grows, and a zip bomb grows far more.
+const (
+	defaultMaxUploadBytes  = 64 << 20
+	defaultMaxExtractBytes = 256 << 20
+	defaultMaxExtractFiles = 20000
+	defaultMaxCloneBytes   = 256 << 20
+	defaultCloneTimeout    = 90 * time.Second
+	defaultUploadTTL       = 2 * time.Hour
+	// ingestPrefix names this engine's staging root under WorkDir; sweepStale
+	// recognises abandoned ones by it.
+	ingestPrefix = "ingest-"
+	// staleIngestAge is how long an ingest root from a previous, killed engine
+	// is left alone before it is swept.
+	staleIngestAge = 24 * time.Hour
+)
 
 // Engine is the control plane.
 type Engine struct {
-	cfg     Config
-	drivers []chamber.Driver
-	bins    bins
-	bus     *events.Bus
+	cfg      Config
+	drivers  []chamber.Driver
+	bins     bins
+	bus      *events.Bus
+	workRoot string // this engine's ingest staging root; removed by Close
 
 	mu      sync.Mutex
 	zoo     []events.Artifact
 	reports map[string]*Detonation
 	order   []string // newest last
+	uploads map[string]*stagedUpload
+	works   map[string]string // detonation id -> its ingest working directory
 }
 
 // bins are the paths to the chamber component binaries.
@@ -79,19 +112,62 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Task == "" {
 		cfg.Task = "Summarize what this repository does."
 	}
+	applyIngestDefaults(&cfg)
 	e := &Engine{
-		cfg:     cfg,
-		bus:     events.NewBus(50000),
-		reports: map[string]*Detonation{},
+		cfg:      cfg,
+		bus:      events.NewBus(50000),
+		reports:  map[string]*Detonation{},
+		uploads:  map[string]*stagedUpload{},
+		works:    map[string]string{},
+		workRoot: filepath.Join(cfg.WorkDir, ingestPrefix+newID()),
 	}
 	if err := e.locateBins(cfg.BinDir); err != nil {
 		return nil, err
+	}
+	// Only now that the engine is certainly usable: no point leaving a staging
+	// directory behind for a New that is about to fail.
+	sweepStale(cfg.WorkDir, staleIngestAge)
+	if err := os.MkdirAll(e.workRoot, 0o700); err != nil {
+		return nil, fmt.Errorf("ingest staging dir %s: %w", cfg.WorkDir, err)
 	}
 	e.drivers = selectDrivers()
 	if zoo, err := loadZoo(cfg.ZooPath); err == nil {
 		e.zoo = zoo
 	}
 	return e, nil
+}
+
+// applyIngestDefaults fills the ingest ceilings. A zero here would mean "no
+// limit" at the point it is used, which is the opposite of what an unset field
+// should mean, so every one of them is defaulted rather than checked later.
+func applyIngestDefaults(cfg *Config) {
+	if cfg.WorkDir == "" {
+		cfg.WorkDir = os.Getenv("REACTOR_WORK_DIR")
+	}
+	if cfg.WorkDir == "" {
+		cfg.WorkDir = filepath.Join(os.TempDir(), "reactor")
+	}
+	if cfg.MaxUploadBytes <= 0 {
+		cfg.MaxUploadBytes = defaultMaxUploadBytes
+	}
+	if cfg.MaxExtractBytes <= 0 {
+		cfg.MaxExtractBytes = defaultMaxExtractBytes
+	}
+	if cfg.MaxExtractFiles <= 0 {
+		cfg.MaxExtractFiles = defaultMaxExtractFiles
+	}
+	if cfg.MaxCloneBytes <= 0 {
+		cfg.MaxCloneBytes = defaultMaxCloneBytes
+	}
+	if cfg.CloneTimeout <= 0 {
+		cfg.CloneTimeout = defaultCloneTimeout
+	}
+	if cfg.UploadTTL <= 0 {
+		cfg.UploadTTL = defaultUploadTTL
+	}
+	if !cfg.AllowLocalRepos {
+		cfg.AllowLocalRepos = os.Getenv("REACTOR_ALLOW_LOCAL_REPOS") == "1"
+	}
 }
 
 // Bus exposes the event bus for the SSE handler.

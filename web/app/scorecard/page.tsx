@@ -22,9 +22,15 @@ export default function ScorecardPage() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col bg-bg">
+    <div className="flex min-h-screen flex-col overflow-x-hidden bg-bg">
       <TopBar />
-      <main className="console-veil flex-1 px-4 py-6 sm:px-6 sm:py-8">
+      {/* The slide frame. This is projected, so the whole scorecard has to land
+          inside one screen — the frame keeps only enough air to breathe and
+          lets the slide itself do the compacting (see Scorecard.tsx). */}
+      {/* `safe center` centres the slide when it fits and silently falls back to
+          top-aligned when it doesn't — so a short viewport still scrolls from
+          the headline rather than clipping it above the top edge. */}
+      <main className="console-veil flex flex-1 flex-col [justify-content:safe_center] px-4 py-4 sm:px-6 sm:py-5">
         <Scorecard data={data} live={live} />
       </main>
     </div>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,19 +20,32 @@ import (
 	"github.com/reactor-sec/reactor/internal/scan"
 )
 
-// DetonateRequest is the API request shape.
+// DetonateRequest is the API request shape. Exactly one of upload_id, repo,
+// artifact (with a source) or artifact_id names what to detonate; when an
+// upload or a repo is named, `artifact` may still ride along to refine the
+// staged artifact's name, kind, source or install step.
 type DetonateRequest struct {
 	ArtifactID string           `json:"artifact_id"`
 	Artifact   *events.Artifact `json:"artifact"`
+	UploadID   string           `json:"upload_id"` // from POST /api/upload
+	Repo       string           `json:"repo"`      // https git url to clone
+	Ref        string           `json:"ref"`       // branch, tag or commit for repo
 	Sessions   int              `json:"sessions"`
 	Network    bool             `json:"network"`
 }
 
 // Detonate starts a detonation and returns its id immediately; the run proceeds
 // on a background goroutine and streams events on the bus.
+//
+// Ingest is the exception to "returns immediately": unpacking an upload and
+// cloning a repository both happen here, synchronously, so their failures reach
+// the caller as an HTTP status instead of as a lifecycle error nobody is
+// watching for yet.
 func (e *Engine) Detonate(req DetonateRequest) (string, error) {
-	art, err := e.resolveArtifact(req)
+	id := "det_" + newID()
+	art, err := e.resolveArtifact(id, req)
 	if err != nil {
+		e.releaseWork(id) // ingest may have staged a directory before failing
 		return "", err
 	}
 	sessions := req.Sessions
@@ -39,13 +53,16 @@ func (e *Engine) Detonate(req DetonateRequest) (string, error) {
 		sessions = e.cfg.DefaultSessions
 	}
 
-	id := "det_" + newID()
+	// The report is served to a browser. Where the engine staged the bytes is a
+	// host path and has no business in it.
+	reportArt := art
+	reportArt.Env = publicEnv(art.Env)
 	det := &Detonation{
 		idgen:   events.NewIDGen(),
 		startMs: nowMs(),
 		done:    make(chan struct{}),
 		Report: &events.DetonationReport{
-			DetonationID: id, ArtifactID: art.ID, Artifact: &art,
+			DetonationID: id, ArtifactID: art.ID, Artifact: &reportArt,
 			Sessions: sessions, Network: req.Network, StartedMs: nowMs(),
 		},
 	}
@@ -58,7 +75,17 @@ func (e *Engine) Detonate(req DetonateRequest) (string, error) {
 	return id, nil
 }
 
-func (e *Engine) resolveArtifact(req DetonateRequest) (events.Artifact, error) {
+// resolveArtifact turns a request into the artifact to detonate. The two
+// ingest paths are checked first because they did not exist before and cannot
+// collide with anything; the inline-artifact and zoo-id paths below them are
+// exactly as they were.
+func (e *Engine) resolveArtifact(detID string, req DetonateRequest) (events.Artifact, error) {
+	if req.UploadID != "" {
+		return e.resolveUpload(detID, req)
+	}
+	if req.Repo != "" {
+		return e.resolveRepo(detID, req)
+	}
 	if req.Artifact != nil && req.Artifact.Source != "" {
 		a := *req.Artifact
 		if a.ID == "" {
@@ -75,10 +102,158 @@ func (e *Engine) resolveArtifact(req DetonateRequest) (events.Artifact, error) {
 	return events.Artifact{}, fmt.Errorf("no artifact specified")
 }
 
+// resolveUpload unpacks a staged upload into this detonation's own working
+// directory. The upload itself is left staged so the same bytes can be
+// detonated again without a re-upload; only the unpacked copy is per-run.
+func (e *Engine) resolveUpload(detID string, req DetonateRequest) (events.Artifact, error) {
+	e.mu.Lock()
+	up := e.uploads[req.UploadID]
+	e.mu.Unlock()
+	if up == nil {
+		return events.Artifact{}, ingestErrf(http.StatusNotFound,
+			"that upload is unknown or has expired — upload the file again")
+	}
+
+	dir, err := e.workDir(detID)
+	if err != nil {
+		return events.Artifact{}, err
+	}
+	stats, err := extractArchive(up.Path, up.Archive, dir, e.extractLimits())
+	if err != nil {
+		return events.Artifact{}, err
+	}
+
+	art := up.artifact()
+	art.Env = map[string]string{"_dir": collapseRoot(dir), "_ingest": "upload"}
+	if up.Install != "" {
+		art.Env["_install"] = up.Install
+	}
+	art.Note = fmt.Sprintf("uploaded %s — %s archive, %s", up.Name, up.Archive, plural(stats.Files, "file"))
+	if err := applyOverrides(&art, req.Artifact); err != nil {
+		return events.Artifact{}, err
+	}
+	return art, nil
+}
+
+// resolveRepo clones a Git repository into this detonation's own working
+// directory and hashes the result, so a repo artifact carries a real digest
+// like every other artifact does.
+func (e *Engine) resolveRepo(detID string, req DetonateRequest) (events.Artifact, error) {
+	repo, err := normalizeRepoURL(req.Repo, e.cfg.AllowLocalRepos)
+	if err != nil {
+		return events.Artifact{}, err
+	}
+	ref, err := safeGitRef(req.Ref)
+	if err != nil {
+		return events.Artifact{}, err
+	}
+	dir, err := e.workDir(detID)
+	if err != nil {
+		return events.Artifact{}, err
+	}
+	// git clone insists on an empty or absent destination.
+	dest := filepath.Join(dir, "repo")
+	if err := e.cloneRepo(context.Background(), repo, ref, dest); err != nil {
+		return events.Artifact{}, err
+	}
+	sum, stats, err := sealTree(dest, e.extractLimits())
+	if err != nil {
+		return events.Artifact{}, err
+	}
+
+	name := repoName(repo)
+	kind, source, install := entrypoint(stats.Names)
+	art := events.Artifact{
+		ID:     "art_git_" + sanitize(name),
+		Kind:   kind,
+		Name:   name,
+		Source: source,
+		SHA256: sum,
+		Note:   fmt.Sprintf("cloned %s%s — %s", repo, refSuffix(ref), plural(stats.Files, "file")),
+		Env:    map[string]string{"_dir": dest, "_ingest": "git", "_repo": repo},
+	}
+	if ref != "" {
+		art.Env["_ref"] = ref
+	}
+	if install != "" {
+		art.Env["_install"] = install
+	}
+	if err := applyOverrides(&art, req.Artifact); err != nil {
+		return events.Artifact{}, err
+	}
+	return art, nil
+}
+
+// applyOverrides lets the client refine an ingested artifact — a better name,
+// the right kind, the command that actually starts it — without ever letting it
+// name a host directory. `_dir` is set by ingest and by ingest alone.
+func applyOverrides(art *events.Artifact, over *events.Artifact) error {
+	if over == nil {
+		return nil
+	}
+	if over.Name != "" {
+		art.Name = over.Name
+	}
+	if over.Kind != "" {
+		if !knownKind(over.Kind) {
+			return ingestErrf(http.StatusBadRequest,
+				"unknown artifact kind %q — use mcp_server, skill or zip", truncate(over.Kind, 32))
+		}
+		art.Kind = over.Kind
+	}
+	if over.Source != "" {
+		art.Source = over.Source
+	}
+	if len(over.Args) > 0 {
+		art.Args = over.Args
+	}
+	if over.Note != "" {
+		art.Note = over.Note
+	}
+	if v := over.Env["_install"]; v != "" {
+		art.Env["_install"] = v
+	}
+	return nil
+}
+
+// publicEnv copies an artifact's env without the host path ingest staged it at.
+func publicEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		if k == "_dir" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// plural renders a count for a human-facing note: "1 file", "12 files".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+func refSuffix(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	return " @ " + ref
+}
+
 // run is the full detonation lifecycle (SPEC §12.6). It always destroys the
 // chamber, including on panic.
 func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network bool) {
 	defer close(det.done)
+	// Whatever ingest staged for this run goes away with the run, on every path
+	// out of here including a panic. Detonations that ingested nothing never
+	// registered a directory, so this costs them a map lookup.
+	defer e.releaseWork(det.Report.DetonationID)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
@@ -134,6 +309,23 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 		return
 	}
 	det.emit(e.bus, life(events.PhaseInstalling, "installed "+art.Name+" into the chamber", nil))
+
+	// An ingested MCP server usually needs its dependencies fetched before it
+	// can start; a zoo server ships its own. The step runs in the chamber, under
+	// the same containment as everything else — what it does during install is
+	// evidence, and catching that is the point (SPEC §4.3). Non-MCP kinds run
+	// their install inside detonateNonMCP, where it is already traced.
+	if install := art.Env["_install"]; install != "" && art.Kind == events.KindMCPServer {
+		if _, err := ch.Exec(ctx, chamber.ExecOpts{
+			Cmd: []string{"sh", "-c", install}, Dir: installDir,
+			Trace: true, TracePath: "logs/strace.0.log", Timeout: 3 * time.Minute,
+			StdoutPath: "logs/install.out", StderrPath: "logs/install.err",
+		}); err != nil {
+			e.fail(det, "install step: "+err.Error())
+			return
+		}
+		det.emit(e.bus, life(events.PhaseInstalling, "ran install step: "+install, nil))
+	}
 
 	// Static baseline (left column) + sink, in the background.
 	go e.runScan(ctx, det, art, installDir, artArgv)
@@ -474,6 +666,14 @@ func baitReport(evs []events.Event, b *bait.Set) events.BaitReport {
 func (e *Engine) runScan(ctx context.Context, det *Detonation, art events.Artifact, installDir string, artArgv []string) {
 	if art.Kind != events.KindMCPServer {
 		return // static description scan only applies to MCP servers
+	}
+	// The static baseline launches the server to pull tools/list — on the host,
+	// which is exactly the thing the incumbent scanners do and Reactor exists to
+	// point at (SPEC §2). That is tolerable for a curated zoo entry an operator
+	// chose. It is not tolerable for something a stranger just uploaded, so an
+	// ingested artifact gets no host-side baseline; its column reads unavailable.
+	if art.Env["_ingest"] != "" {
+		return
 	}
 	res := scan.Run(ctx, scan.Options{
 		Name: art.Name, Argv: artArgv, Dir: art.Env["_dir"],

@@ -3,7 +3,20 @@
 import { Check, CircleAlert } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { SessionView } from "@/lib/reducer";
+import { Led, SectionLabel } from "@/components/ui";
 
+type RowStatus = "pending" | "running" | "clean" | "dirty";
+
+/**
+ * The session ladder — detonations accruing down a gutter rail (DESIGN §2.3).
+ * The rail hairline plus the mono index carries the structure, so the rows need
+ * no cards and no zebra: only spacing, a node marker where something happened,
+ * and a `tick-in` entrance so sessions *accrue* instead of popping.
+ *
+ * Type follows the split: the detonation index is machine data and stays mono;
+ * the status words are chrome and are sentence-case sans. CLEAN is the one
+ * exception — a genuine status stamp, so uppercase is earned there.
+ */
 export function SessionLadder({
   sessions,
   plannedSessions,
@@ -17,11 +30,22 @@ export function SessionLadder({
     const n = i + 1;
     return sessions.find((s) => s.n === n) ?? null;
   });
+  const landed = sessions.filter((s) => s.status !== "running").length;
 
   return (
     <div className="px-4 py-3">
-      <div className="strip-label mb-2">Session ladder · fresh sandbox each detonation</div>
-      <div className="flex flex-col gap-1">
+      <SectionLabel
+        right={
+          <span className="telemetry tnum whitespace-nowrap">
+            {landed}/{plannedSessions}
+          </span>
+        }
+      >
+        Session ladder
+      </SectionLabel>
+      <p className="mt-1 text-xs text-muted">Fresh sandbox each detonation</p>
+
+      <div className="rail rail-tight mt-3">
         {rows.map((s, i) => (
           <SessionRow key={i} n={i + 1} s={s} />
         ))}
@@ -31,64 +55,74 @@ export function SessionLadder({
 }
 
 function SessionRow({ n, s }: { n: number; s: SessionView | null }) {
-  const status = s?.status ?? "pending";
+  const status: RowStatus = (s?.status as RowStatus) ?? "pending";
+  const node =
+    status === "dirty"
+      ? "danger"
+      : status === "running"
+        ? "live"
+        : status === "clean"
+          ? undefined
+          : null;
+
   return (
-    <div
-      className={cn(
-        "flex items-center gap-3 rounded-lg border px-3 py-2 transition-all duration-200",
-        status === "dirty"
-          ? "animate-fade-slide-up border-danger/35 bg-danger/[0.06]"
-          : status === "clean"
-            ? "animate-fade-slide-up border-line bg-surface-2"
-            : status === "running"
-              ? "animate-fade-slide-up border-accent/40 bg-accent/[0.05]"
-              : "border-dashed border-line/70 opacity-45",
-      )}
-    >
-      <StatusIcon status={status} />
-      <span className="w-[74px] font-mono text-[13px] text-fg">
-        deton. <span className="tnum">{n}</span>
-      </span>
-      <span className="flex-1 truncate text-xs">
-        {status === "dirty" ? (
-          <span className="font-medium text-danger">hijacked — oracle fired</span>
-        ) : status === "clean" ? (
-          <span className="text-muted">
-            clean · <span className="tnum">{s?.toolCount ?? 3}</span> tools ·{" "}
-            <span className="tnum">{s?.baitCount ?? 0}</span> bait
-          </span>
-        ) : status === "running" ? (
-          <span className="text-accent">running…</span>
-        ) : (
-          <span className="text-faint">queued</span>
+    <div className={cn("rail-row py-2", status !== "pending" && "animate-tick-in")}>
+      <div className="rail-time">
+        {String(n).padStart(2, "0")}
+        {node !== null && (
+          <span className="rail-node" data-tone={node} aria-hidden="true" />
         )}
-      </span>
+      </div>
+
+      <div
+        className={cn(
+          "-mx-2 flex min-w-0 items-center gap-2.5 rounded-lg px-2",
+          status === "dirty" && "bg-danger/[0.07]",
+        )}
+      >
+        <span className="flex w-3.5 shrink-0 justify-center" aria-hidden="true">
+          {status === "dirty" ? (
+            <CircleAlert size={13} className="text-danger" />
+          ) : status === "clean" ? (
+            <Check size={13} className="text-success" />
+          ) : status === "running" ? (
+            <Led tone="live" size="sm" pulse />
+          ) : (
+            <span className="h-1.5 w-1.5 rounded-full border border-dashed border-line-strong" />
+          )}
+        </span>
+
+        <span className="shrink-0 font-mono text-xs text-faint">
+          deton. <span className="tnum text-fg">{n}</span>
+        </span>
+
+        {status === "dirty" ? (
+          <span className="truncate text-sm font-medium text-danger">
+            Hijacked · oracle fired
+          </span>
+        ) : status === "clean" ? (
+          <>
+            <span className="text-2xs font-semibold uppercase tracking-label-wide text-success">
+              clean
+            </span>
+            <span className="rule" aria-hidden="true" />
+            <span className="telemetry tnum shrink-0 whitespace-nowrap">
+              <span className="tnum">{s?.toolCount ?? 3}</span> tools ·{" "}
+              <span className="tnum">{s?.baitCount ?? 0}</span> bait
+            </span>
+          </>
+        ) : status === "running" ? (
+          <>
+            <span className="shrink-0 text-sm text-live">Running</span>
+            <span
+              className="sweep-bg animate-sweep h-px flex-1 rounded-full"
+              aria-hidden="true"
+            />
+          </>
+        ) : (
+          <span className="text-sm text-faint">Queued</span>
+        )}
+      </div>
     </div>
   );
-}
-
-function StatusIcon({ status }: { status: string }) {
-  if (status === "dirty") {
-    return (
-      <span className="grid h-5 w-5 place-items-center rounded-full bg-danger/15 text-danger">
-        <CircleAlert size={13} />
-      </span>
-    );
-  }
-  if (status === "clean") {
-    return (
-      <span className="grid h-5 w-5 place-items-center rounded-full bg-success/15 text-success">
-        <Check size={13} />
-      </span>
-    );
-  }
-  if (status === "running") {
-    return (
-      <span className="relative grid h-5 w-5 place-items-center">
-        <span className="absolute h-5 w-5 animate-ping rounded-full bg-accent/25" />
-        <span className="h-2 w-2 rounded-full bg-accent" />
-      </span>
-    );
-  }
-  return <span className="h-5 w-5 rounded-full border border-dashed border-line" />;
 }

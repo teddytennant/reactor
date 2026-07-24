@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { Play, RotateCcw, Sparkles, Zap } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronRight,
+  FlaskConical,
+  Loader2,
+  RotateCcw,
+  ShieldOff,
+  Zap,
+} from "lucide-react";
 import type { Artifact, ReactorEvent } from "@/lib/events";
 import { consoleReducer, initialConsoleState } from "@/lib/reducer";
-import { detonate, getArtifacts, getHealth } from "@/lib/api";
+import { detonate, detonateWithError, getArtifacts, getHealth, type DetonateBody } from "@/lib/api";
 import { startLive, startReplay, type DetonationRunner } from "@/lib/runner";
 import {
   FIXTURE_ARTIFACTS,
@@ -14,11 +22,19 @@ import {
 import { cn } from "@/lib/cn";
 import { TopBar } from "@/components/TopBar";
 import { ArtifactPicker } from "@/components/console/ArtifactPicker";
+import { ArtifactIntake, isIngested, type IntakeTarget } from "@/components/console/ArtifactIntake";
 import { ScanColumn } from "@/components/console/ScanColumn";
 import { ReactorColumn } from "@/components/console/ReactorColumn";
 
 const PLANNED_SESSIONS = 5;
 type Mode = "probing" | "live" | "replay";
+
+/** How each intake source names itself to POST /api/detonate (CONTRACT.md). */
+function bodyFor(t: IntakeTarget): DetonateBody {
+  if (t.source === "upload") return { upload_id: t.uploadId, sessions: PLANNED_SESSIONS };
+  if (t.source === "repo") return { repo: t.repo, ref: t.ref, sessions: PLANNED_SESSIONS };
+  return { artifact: t.artifact, sessions: PLANNED_SESSIONS };
+}
 
 export default function ConsolePage() {
   const [state, dispatch] = useReducer(consoleReducer, undefined, initialConsoleState);
@@ -29,12 +45,22 @@ export default function ConsolePage() {
   );
   const [running, setRunning] = useState(false);
   const [showPicker, setShowPicker] = useState(true);
+  // What the intake armed, if anything. When set it beats the zoo selection:
+  // an upload or a clone is a deliberate act, a zoo row is a default.
+  const [intake, setIntake] = useState<IntakeTarget | null>(null);
+  const [arming, setArming] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  // Ingested artifacts get no host-side static baseline (CONTRACT.md), so the
+  // left column has nothing to report and must say so rather than hang.
+  const [runIngested, setRunIngested] = useState(false);
 
   const runnerRef = useRef<DetonationRunner | null>(null);
   const gotVerdictRef = useRef(false);
   const receivedRef = useRef(false);
   const selectedRef = useRef<Artifact | null>(selected);
   selectedRef.current = selected;
+  const intakeRef = useRef<IntakeTarget | null>(intake);
+  intakeRef.current = intake;
 
   // Probe the engine once; default to replay mode if unreachable (DEMO §7).
   useEffect(() => {
@@ -68,126 +94,230 @@ export default function ConsolePage() {
     });
   }, []);
 
+  const launch = useCallback(
+    (id: string, artifact: Artifact | null, fixtureFallback: boolean) => {
+      dispatch({ type: "meta", detonationId: id });
+      runnerRef.current = startLive(id, {
+        onEvent: (ev) => {
+          receivedRef.current = true;
+          if (ev.kind === "verdict") gotVerdictRef.current = true;
+          dispatch({ type: "event", ev });
+        },
+        onDone: () => setRunning(false),
+        onError: () => {
+          // Live stream failed before completing — fall back to the fixture.
+          // Never for an ingested artifact: replaying the bundled money shot
+          // over someone's own upload would be a lie.
+          if (fixtureFallback && !gotVerdictRef.current && !receivedRef.current) {
+            beginReplay(artifact);
+            return;
+          }
+          setRunning(false);
+          if (!receivedRef.current) {
+            setRunError("the event stream closed before the engine sent anything");
+          }
+        },
+      });
+    },
+    [beginReplay],
+  );
+
   const run = useCallback(
     async (opts: { forceReplay?: boolean } = {}) => {
-      stopRunner();
-      dispatch({ type: "reset" });
-      gotVerdictRef.current = false;
-      receivedRef.current = false;
-      setRunning(true);
-      setShowPicker(false);
-      const artifact = selectedRef.current;
-      dispatch({ type: "meta", artifactName: artifact?.name });
-
+      const target = intakeRef.current;
+      const artifact = target ? target.artifact : selectedRef.current;
       const wantsLive = mode === "live" && !opts.forceReplay;
+
+      const begin = () => {
+        stopRunner();
+        dispatch({ type: "reset" });
+        gotVerdictRef.current = false;
+        receivedRef.current = false;
+        setRunError(null);
+        setRunning(true);
+        setShowPicker(false);
+        setRunIngested(isIngested(target));
+        dispatch({ type: "meta", artifactName: artifact?.name });
+      };
+
+      // Uploads, clones and inline specs have no fixture standing behind them,
+      // and the POST itself may be cloning for up to 90s. So the intake stays
+      // on screen until the engine has accepted it, and a refusal lands as the
+      // engine's own sentence rather than as a silent fixture replay.
+      if (target) {
+        if (!wantsLive) {
+          setRunError("Upload and repository intake need a live engine.");
+          return;
+        }
+        setArming(true);
+        const res = await detonateWithError(bodyFor(target));
+        setArming(false);
+        if (!res.id) {
+          setRunError(res.error ?? "the engine refused the detonation");
+          return;
+        }
+        begin();
+        launch(res.id, artifact, false);
+        return;
+      }
+
+      begin();
       if (wantsLive) {
         const id = await detonate({ artifact_id: artifact?.id, sessions: PLANNED_SESSIONS });
         if (id) {
-          dispatch({ type: "meta", detonationId: id });
-          runnerRef.current = startLive(id, {
-            onEvent: (ev) => {
-              receivedRef.current = true;
-              if (ev.kind === "verdict") gotVerdictRef.current = true;
-              dispatch({ type: "event", ev });
-            },
-            onDone: () => setRunning(false),
-            onError: () => {
-              // Live stream failed before completing — fall back to the fixture.
-              if (!gotVerdictRef.current && !receivedRef.current) {
-                beginReplay(artifact);
-              } else {
-                setRunning(false);
-              }
-            },
-          });
+          launch(id, artifact, true);
           return;
         }
         // POST failed — degrade to replay so the demo never dies.
       }
       beginReplay(artifact);
     },
-    [mode, stopRunner, beginReplay],
+    [mode, stopRunner, beginReplay, launch],
   );
 
   const reset = useCallback(() => {
     stopRunner();
     dispatch({ type: "reset" });
     setRunning(false);
+    setRunError(null);
     setShowPicker(true);
   }, [stopRunner]);
 
   const isReplayable = useCallback((a: Artifact) => REPLAYABLE_IDS.has(a.id), []);
-  const artifactName = state.artifactName ?? selected?.name ?? "artifact";
-  const scanActive = running || state.scanLines.length > 0;
+  const armed = intake?.artifact ?? selected;
+  const artifactName = state.artifactName ?? armed?.name ?? "artifact";
+  // An ingested artifact never produces scan lines, so the column must not sit
+  // there claiming to be waiting for a scanner that was deliberately not run.
+  const noBaseline = runIngested && state.scanLines.length === 0;
+  const scanActive = (running || state.scanLines.length > 0) && !noBaseline;
+
+  /**
+   * The core bloom (DESIGN §1 Texture / §2) — the state-reactive radial ambient
+   * behind the Reactor column, and the most identity-defining element on the
+   * page. It reads the same two facts the header bar does: are we detonating,
+   * and what did the verdict say.
+   */
+  const coreState: "idle" | "running" | "blocked" | "allowed" = running
+    ? "running"
+    : state.verdict?.label === "MALICIOUS"
+      ? "blocked"
+      : state.verdict?.label === "ALLOWED"
+        ? "allowed"
+        : "idle";
 
   return (
-    <div className="flex min-h-screen flex-col bg-bg">
+    <div className="flex min-h-dvh flex-col bg-bg lg:h-dvh lg:min-h-0 lg:overflow-hidden">
       <TopBar />
 
-      <main className="console-veil mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-4 py-4 sm:px-6 lg:min-h-0">
+      {/* The only thing that ever reaches past this box is `.core-bloom::before`,
+          whose ambient layer is inset `-5%` horizontally by design. `overflow-x-clip`
+          contains that decorative overhang without turning main into a scroll
+          container; every real child is width-constrained and `min-w-0`. */}
+      <main className="console-veil mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 overflow-x-clip px-4 pb-4 pt-4 sm:px-6 lg:min-h-0">
         {showPicker ? (
           <PickerPanel
             mode={mode}
             artifacts={artifacts}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={(a) => {
+              setIntake(null);
+              setRunError(null);
+              setSelected(a);
+            }}
+            intake={intake}
+            onIntake={(t) => {
+              setIntake(t);
+              setRunError(null);
+            }}
             isReplayable={isReplayable}
             onDetonate={() => run()}
-            onReplay={() => run({ forceReplay: true })}
             disabled={running}
+            arming={arming}
+            error={runError}
           />
         ) : (
           <RunHeaderBar
             mode={mode}
-            artifact={selected}
+            artifact={armed}
             running={running}
+            arming={arming}
+            error={runError}
             verdictLabel={state.verdict?.label}
-            onReplay={() => run({ forceReplay: true })}
             onDetonate={() => run()}
             onReset={reset}
           />
         )}
 
-        <div className="grid min-h-0 grid-cols-1 gap-4 lg:flex-1 lg:auto-rows-fr lg:grid-cols-2">
-          <ScanColumn
-            artifactName={artifactName}
-            scanLines={state.scanLines}
-            result={state.scanResult}
-            active={scanActive}
-          />
-          <ReactorColumn state={state} plannedSessions={PLANNED_SESSIONS} active={running} />
+        {/* At idle the columns size to their content — two 700px hollow boxes
+            read as broken, not as an instrument at rest. Once a detonation is
+            armed the console goes back to filling the viewport (DESIGN §3). */}
+        <div
+          className={cn(
+            "grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-2",
+            showPicker ? "lg:auto-rows-min" : "lg:flex-1 lg:auto-rows-fr",
+          )}
+        >
+          {/* The scan column, with the one thing it cannot say for itself: an
+              ingested artifact gets no host-side baseline, so `unavailable` is
+              a policy, not a failure (CONTRACT.md § Artifact ingest). */}
+          <div
+            className={cn(
+              "grid min-h-0",
+              noBaseline ? "grid-rows-[auto_minmax(0,1fr)] gap-2.5" : "grid-rows-[minmax(0,1fr)]",
+            )}
+          >
+            {noBaseline && (
+              <p className="flex items-start gap-2 px-1 text-sm leading-relaxed text-muted">
+                <ShieldOff size={14} className="mt-1 shrink-0 text-faint" aria-hidden="true" />
+                <span>
+                  Static baseline <span className="font-mono">unavailable</span> for an uploaded or
+                  cloned artifact — mcp-scan reads tool descriptions by installing and launching the
+                  server on this host, and Reactor will not do that with a stranger&rsquo;s code.
+                  The right column is the only column here.
+                </span>
+              </p>
+            )}
+            <ScanColumn
+              artifactName={artifactName}
+              scanLines={state.scanLines}
+              result={state.scanResult}
+              active={scanActive}
+            />
+          </div>
+          {/* The bloom lives on the column wrapper so it reads around and
+              between the Reactor panels, never inside a single one. */}
+          <div
+            className="core-bloom grid min-h-0 grid-rows-[minmax(0,1fr)]"
+            data-core={coreState}
+          >
+            <ReactorColumn state={state} plannedSessions={PLANNED_SESSIONS} active={running} />
+          </div>
         </div>
       </main>
     </div>
   );
 }
 
-// ---- mode chip ------------------------------------------------------------
+// ---- mode readout ---------------------------------------------------------
 
-function ModeChip({ mode }: { mode: Mode }) {
+/**
+ * Engine-vs-fixture provenance. Real information, but secondary: it is plain
+ * sentence-case sans in `--muted`, never a chip and never parked in a card's
+ * top-right corner where it reads as a status a user has to decode.
+ */
+function ModeNote({ mode, className }: { mode: Mode; className?: string }) {
   if (mode === "probing") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-2xs font-medium text-faint">
-        <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-faint" />
-        probing engine…
-      </span>
-    );
+    return <span className={cn("text-sm text-faint", className)}>Probing engine…</span>;
   }
   if (mode === "live") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-success/35 bg-success/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-success">
-        <span className="h-1.5 w-1.5 rounded-full bg-success" />
-        Live engine
-      </span>
-    );
+    return <span className={cn("text-sm text-muted", className)}>Live engine</span>;
   }
   return (
     <span
       title="Engine unreachable — playing the bundled money-shot fixture through the same render path."
-      className="inline-flex items-center gap-1.5 rounded-md border border-accent/35 bg-accent/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-accent"
+      className={cn("text-sm text-muted", className)}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-      Replay
+      Bundled replay
     </span>
   );
 }
@@ -199,69 +329,170 @@ function PickerPanel({
   artifacts,
   selected,
   onSelect,
+  intake,
+  onIntake,
   isReplayable,
   onDetonate,
-  onReplay,
   disabled,
+  arming,
+  error,
 }: {
   mode: Mode;
   artifacts: Artifact[];
   selected: Artifact | null;
   onSelect: (a: Artifact) => void;
+  intake: IntakeTarget | null;
+  onIntake: (t: IntakeTarget | null) => void;
   isReplayable: (a: Artifact) => boolean;
   onDetonate: () => void;
-  onReplay: () => void;
   disabled: boolean;
+  arming: boolean;
+  error: string | null;
 }) {
+  const [zooOpen, setZooOpen] = useState(false);
+  const zooId = "artifact-zoo";
+
+  // With no engine there is nothing to upload to, so the sample rack is the
+  // only way through and opens itself.
+  useEffect(() => {
+    if (mode === "replay") setZooOpen(true);
+  }, [mode]);
+
+  const sampleArmed = !intake && selected;
+
   return (
-    <div className="rounded-2xl border border-line bg-surface p-4 sm:p-5">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <h1 className="text-[15px] font-semibold tracking-tight text-fg">
+    <section className="panel shrink-0 overflow-hidden">
+      {/* intake strip — a label and nothing else; provenance lives in the
+          footnote below, not as a chip floating in the corner */}
+      <div className="flex items-center gap-3 border-b border-line px-5 py-3">
+        <span className="strip-label whitespace-nowrap">Artifact intake</span>
+        <span className="rule" aria-hidden="true" />
+      </div>
+
+      <div className="flex flex-col gap-4 px-5 py-4">
+        <div className="max-w-2xl">
+          <h1 className="text-xl font-semibold tracking-tight text-fg">
             Drop an untrusted agent artifact
           </h1>
-          <p className="mt-0.5 text-xs text-muted">
+          <p className="mt-2 text-base leading-relaxed text-muted">
             Static scanners read the label. Reactor points a sacrificial victim agent at it and
             watches it behave.
           </p>
         </div>
-        <ModeChip mode={mode} />
+
+        <ArtifactIntake
+          mode={mode}
+          target={intake}
+          onTarget={onIntake}
+          disabled={disabled || arming}
+        />
+
+        {/* The zoo is the sample rack now: folded away by default, and still a
+            bounded, self-scrolling well when opened so it can never push the
+            primary action or the console columns below the fold. */}
+        <div className="flex max-w-3xl flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => setZooOpen((o) => !o)}
+            aria-expanded={zooOpen}
+            aria-controls={zooId}
+            className="focus-ring group -mx-1.5 flex items-center gap-2 rounded-lg px-1.5 py-1 text-left"
+          >
+            <ChevronRight
+              size={14}
+              aria-hidden="true"
+              className={cn(
+                "shrink-0 text-faint transition-transform duration-200 ease-instrument",
+                zooOpen && "rotate-90",
+              )}
+            />
+            <span className="strip-label whitespace-nowrap group-hover:text-fg">
+              or try a sample artifact
+            </span>
+            <span className="rule" aria-hidden="true" />
+            <span className="inline-flex min-w-0 items-baseline gap-2 whitespace-nowrap text-sm text-muted">
+              {sampleArmed && !zooOpen && (
+                <>
+                  <span className="min-w-0 max-w-[14rem] truncate font-mono text-2xs text-fg">
+                    {selected.name}
+                  </span>
+                  <span className="text-faint" aria-hidden="true">
+                    ·
+                  </span>
+                </>
+              )}
+              <span>
+                <span className="tnum">{artifacts.length}</span> in zoo
+              </span>
+            </span>
+          </button>
+          <div id={zooId} hidden={!zooOpen}>
+            <ArtifactPicker
+              artifacts={artifacts}
+              selectedId={intake ? null : (selected?.id ?? null)}
+              onSelect={onSelect}
+              isReplayable={isReplayable}
+              showOfflineTag={mode === "replay"}
+              disabled={disabled}
+            />
+          </div>
+        </div>
       </div>
 
-      <ArtifactPicker
-        artifacts={artifacts}
-        selectedId={selected?.id ?? null}
-        onSelect={onSelect}
-        isReplayable={isReplayable}
-        showOfflineTag={mode === "replay"}
-        disabled={disabled}
-      />
-
-      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+      {/* arming strip — the one primary action, carried by maximum ink contrast
+          rather than hue: `bg-fg text-bg` is near-white on near-black in dark and
+          inverts to near-black on white in light. No chroma anywhere on the page. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line bg-surface-2/40 px-5 py-4">
         <button
           type="button"
           onClick={onDetonate}
-          disabled={disabled || !selected}
-          className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg shadow-glow-accent transition-transform hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+          disabled={disabled || arming || (!selected && !intake)}
+          className="focus-ring inline-flex items-center gap-2 rounded-xl bg-fg px-4 py-2.5 text-sm font-semibold text-bg transition duration-200 ease-instrument hover:opacity-90 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
         >
-          <Zap size={15} />
-          Detonate
+          {arming ? (
+            <>
+              <Loader2 size={15} className="animate-spin-slow" aria-hidden="true" />
+              {intake?.source === "repo" ? "Cloning…" : "Arming…"}
+            </>
+          ) : (
+            <>
+              <Zap size={15} className="fill-current" aria-hidden="true" />
+              Detonate
+            </>
+          )}
         </button>
-        <button
-          type="button"
-          onClick={onReplay}
-          disabled={disabled}
-          className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-3.5 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-50"
-        >
-          <Play size={14} />
-          Replay demo
-        </button>
-        <span className="ml-auto inline-flex items-center gap-1.5 text-2xs text-faint">
-          <Sparkles size={12} />
-          {PLANNED_SESSIONS} detonations · fresh sandbox each · victim holds only bait
+        <span className="ml-auto inline-flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-sm text-muted">
+          <FlaskConical size={14} className="shrink-0 text-faint" aria-hidden="true" />
+          <span>
+            <span className="tnum">{PLANNED_SESSIONS}</span> detonations · fresh sandbox each ·
+            victim holds only bait
+          </span>
+          <span className="text-faint" aria-hidden="true">
+            ·
+          </span>
+          <ModeNote mode={mode} />
         </span>
+        <RunError error={error} />
       </div>
-    </div>
+    </section>
+  );
+}
+
+/**
+ * A refused detonation, in the engine's own words. The engine writes these for
+ * a person and they carry no host paths (CONTRACT.md), so they are rendered
+ * verbatim rather than translated into something vaguer.
+ */
+function RunError({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <p
+      role="alert"
+      className="flex w-full items-start gap-2 text-sm leading-relaxed text-danger"
+    >
+      <AlertTriangle size={14} className="mt-1 shrink-0" aria-hidden="true" />
+      <span className="min-w-0">{error}</span>
+    </p>
   );
 }
 
@@ -271,75 +502,77 @@ function RunHeaderBar({
   mode,
   artifact,
   running,
+  arming,
+  error,
   verdictLabel,
-  onReplay,
   onDetonate,
   onReset,
 }: {
   mode: Mode;
   artifact: Artifact | null;
   running: boolean;
+  arming: boolean;
+  error: string | null;
   verdictLabel?: string;
-  onReplay: () => void;
   onDetonate: () => void;
   onReset: () => void;
 }) {
-  const status = running
-    ? { text: "detonating…", cls: "text-accent" }
-    : verdictLabel === "MALICIOUS"
-      ? { text: "blocked", cls: "text-danger" }
-      : verdictLabel === "ALLOWED"
-        ? { text: "allowed", cls: "text-success" }
-        : verdictLabel
-          ? { text: "complete", cls: "text-muted" }
-          : { text: "ready", cls: "text-muted" };
+  const status: { text: string; cls: string } = arming
+    ? { text: "arming…", cls: "text-live" }
+    : running
+      ? { text: "detonating…", cls: "text-live" }
+      : verdictLabel === "MALICIOUS"
+        ? { text: "blocked", cls: "text-danger" }
+        : verdictLabel === "ALLOWED"
+          ? { text: "allowed", cls: "text-success" }
+          : verdictLabel
+            ? { text: "complete", cls: "text-muted" }
+            : { text: "ready", cls: "text-muted" };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <span
-          className={cn(
-            "h-2 w-2 shrink-0 rounded-full",
-            running ? "animate-pulse-dot bg-accent" : verdictLabel === "MALICIOUS" ? "bg-danger" : verdictLabel === "ALLOWED" ? "bg-success" : "bg-faint",
-          )}
-        />
-        <div className="min-w-0">
-          <div className="truncate font-mono text-[13px] font-medium text-fg">{artifact?.name}</div>
-          <div className={cn("text-2xs font-medium uppercase tracking-wide", status.cls)}>
-            {status.text}
-          </div>
-        </div>
+    <div className="panel flex shrink-0 flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-5">
+      {/* subject — the package name is machine data, so it stays mono. No lamp:
+          the status word beside it already says what the run is doing. */}
+      <span className="min-w-0 truncate font-mono text-sm font-medium text-fg">
+        {artifact?.name}
+      </span>
+
+      <span className="hidden h-5 w-px bg-line sm:block" aria-hidden="true" />
+
+      {/* status readout — sentence-case sans, paired with its label so state is
+          never carried by colour alone */}
+      <div className="flex items-baseline gap-2">
+        <span className="strip-label">Status</span>
+        <span className={cn("text-sm font-medium capitalize", status.cls)}>{status.text}</span>
       </div>
-      <div className="flex items-center gap-2">
-        <ModeChip mode={mode} />
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <ModeNote mode={mode} />
         {!running && (
           <button
             type="button"
             onClick={onDetonate}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+            disabled={arming}
+            className="focus-ring inline-flex items-center gap-2 rounded-xl bg-surface-2 px-3.5 py-2 text-sm font-medium text-fg transition-colors duration-200 ease-instrument hover:bg-surface-3 disabled:pointer-events-none disabled:opacity-40"
           >
-            <Zap size={13} />
+            {arming ? (
+              <Loader2 size={14} className="animate-spin-slow text-faint" aria-hidden="true" />
+            ) : (
+              <Zap size={14} className="text-faint" aria-hidden="true" />
+            )}
             Re-detonate
           </button>
         )}
         <button
           type="button"
-          onClick={onReplay}
-          disabled={running}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-50"
-        >
-          <Play size={13} />
-          Replay
-        </button>
-        <button
-          type="button"
           onClick={onReset}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+          className="focus-ring inline-flex items-center gap-2 rounded-xl bg-surface-2 px-3.5 py-2 text-sm font-medium text-muted transition-colors duration-200 ease-instrument hover:bg-surface-3 hover:text-fg"
         >
-          <RotateCcw size={13} />
+          <RotateCcw size={14} aria-hidden="true" />
           New
         </button>
       </div>
+      <RunError error={error} />
     </div>
   );
 }

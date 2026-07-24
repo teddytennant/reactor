@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never let CI reach a hosted model. The deterministic analyst and the sim
+  # victim are the offline reasoners; a run that silently started billing a
+  # provider would also stop being reproducible.
+  REACTOR_ANALYST: deterministic
+  REACTOR_VICTIM_BACKEND: sim
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt'd:"; echo "$unformatted"
+            gofmt -d ./cmd ./internal
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      # -race matters here: the engine fans every chamber event onto a bus that
+      # the SSE handler, the CLI renderer and the report snapshot all read
+      # concurrently, and the wire proxy pumps two directions at once.
+      - run: go test -race -count=1 ./...
+
+      - name: build every binary
+        run: make go
+
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all
+      - run: cargo build --release
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      # lib/*.test.ts run on node's built-in runner via type stripping — no test
+      # framework in the dependency tree.
+      - run: npm test
+      - run: npm run build
+
+  eval:
+    name: eval (python gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The scorecard gate decides whether a detonation run counts as green, so
+      # its own logic is tested before it is trusted.
+      - run: python3 -m unittest discover -s eval -p '*_test.py' -v
+
+  zoo:
+    name: zoo fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Proves the authored attacks still behave as authored: notes-mcp poisons
+      # exactly its 4th serve, the benign controls stay byte-stable, trigger-mcp
+      # only wakes on its magic input, sleeper-mcp beacons late. If a fixture
+      # silently stops attacking, every detection test below it is meaningless.
+      # Never runs the dropper/stealer payloads — those are chamber-only.
+      - run: bash zoo/verify.sh
+
+  detonate:
+    name: end-to-end detonation
+    runs-on: ubuntu-latest
+    needs: [go, rust, zoo, eval]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The local chamber traces skill/zip artifacts with strace to produce
+      # behavioral evidence; without it install_hook and canary_read go quiet.
+      - name: install strace
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq strace
+
+      - run: make build
+
+      # One artifact end to end first: it fails fast with readable output if the
+      # chamber, wire proxy, sink or oracle chain is broken, before the 10-minute
+      # full-zoo run. `reactor detonate` exits 2 on a blocked artifact, which is
+      # the expected outcome for the rug pull.
+      - name: detonate the rug pull
+        run: |
+          set -o pipefail
+          ./bin/reactor detonate art_notes_mcp --sessions 4 | tee /tmp/detonate.log && rc=0 || rc=$?
+          test "$rc" = 2 || { echo "::error::expected exit 2 (blocked), got $rc"; exit 1; }
+          grep -q 'RUG_PULL · critical' /tmp/detonate.log \
+            || { echo "::error::rug_pull did not fire"; exit 1; }
+          grep -q 'CONTEXT_EXFIL' /tmp/detonate.log \
+            || { echo "::error::the system-prompt canary never left the agent's head"; exit 1; }
+          grep -q 'INDUSTRY STANDARD.*CLEAN' /tmp/detonate.log \
+            || { echo "::error::the static baseline caught it — the static-blind contrast is fake"; exit 1; }
+
+      - name: detonate a benign control
+        run: |
+          ./bin/reactor detonate art_echo_mcp --sessions 3 | tee /tmp/benign.log
+          grep -q 'REACTOR: ALLOWED' /tmp/benign.log \
+            || { echo "::error::a benign server was quarantined"; exit 1; }
+
+      - name: start the engine
+        run: |
+          nohup ./bin/reactor serve --addr 127.0.0.1:8787 > "$RUNNER_TEMP/engine.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8787/api/health >/dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::engine did not come up"; cat "$RUNNER_TEMP/engine.log"; exit 1
+
+      # The ingest path is how someone detonates their own artifact rather than
+      # one of ours. internal/engine unit-tests the unpacking; this is the only
+      # place the whole chain runs — archive in, chamber out, verdict.
+      - name: upload → detonate → verdict
+        run: python3 eval/smoke_ingest.py
+
+      # The whole offline zoo, scored against eval/expected.json.
+      - name: full zoo scorecard
+        run: python3 eval/run.py --out "$RUNNER_TEMP/eval" --check
+
+      - name: engine log
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/engine.log" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scorecard
+          path: ${{ runner.temp }}/eval/
+          if-no-files-found: warn

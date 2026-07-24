@@ -13,64 +13,94 @@ function displayLabel(label: string): string {
   return label;
 }
 
+/**
+ * The last beat of the demo, and the only element on the page that legitimately
+ * floats — a soft, wide, low-opacity elevation, not a hue halo. Decisive by
+ * scale and by one earned hue: an icon in a tinted tile, one very large word,
+ * the family beside it, then the evidence. BLOCKED and ALLOWED never rely on
+ * color alone — the icon, the tile and the word carry it.
+ */
 export function VerdictBanner({ verdict }: { verdict: Verdict }) {
   const blocked = verdict.label === "MALICIOUS" || verdict.label === "SUSPICIOUS";
   const label = displayLabel(verdict.label);
-  const tone = blocked
-    ? { border: "border-danger/45", bg: "bg-danger/[0.08]", text: "text-danger", chip: "bg-danger text-white", glow: "shadow-glow-danger" }
-    : { border: "border-success/40", bg: "bg-success/[0.07]", text: "text-success", chip: "bg-success text-white", glow: "shadow-glow-success" };
   const Icon = blocked ? ShieldX : ShieldCheck;
+  const toneText = blocked ? "text-danger" : "text-success";
 
   return (
-    <div className={cn("animate-verdict-in rounded-2xl border p-4 sm:p-5", tone.border, tone.bg, tone.glow)}>
-      <div className="flex items-center gap-3.5">
-        <span className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-xl", blocked ? "bg-danger/15" : "bg-success/15", tone.text)}>
-          <Icon size={26} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("text-2xl font-bold tracking-tight sm:text-[26px]", tone.text)}>
-              {label}
-            </span>
-            <span
-              className={cn(
-                "rounded-md px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
-                tone.chip,
-              )}
-            >
-              {familyLabel(verdict.family)}
-            </span>
-          </div>
-          <p className="mt-1.5 text-sm leading-snug text-muted">{verdict.explanation}</p>
+    <div
+      className={cn(
+        "panel-float animate-verdict-in relative overflow-hidden",
+        blocked ? "border-danger/30 bg-danger/[0.05]" : "border-success/30 bg-success/[0.04]",
+      )}
+    >
+      <div className="px-5 py-5">
+        <div className="flex items-center gap-2.5">
+          <span className="strip-label whitespace-nowrap">Verdict</span>
+          <span className="rule" aria-hidden="true" />
         </div>
-      </div>
 
-      <div className="mt-3.5 flex flex-col gap-2 border-t border-line/70 pt-3">
-        <div className="flex items-start justify-between gap-3">
-          <span className="text-2xs uppercase tracking-wide text-faint">Evidence</span>
-          <EvidenceIds ids={verdict.evidence} tone={blocked ? "danger" : "success"} />
+        <div className="mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2">
+          <span
+            aria-hidden="true"
+            className={cn(
+              "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
+              blocked ? "bg-danger/15" : "bg-success/15",
+              toneText,
+            )}
+          >
+            <Icon size={22} strokeWidth={2} />
+          </span>
+          <span
+            className={cn(
+              "text-3xl font-semibold leading-none tracking-tight sm:text-4xl",
+              toneText,
+            )}
+          >
+            {label}
+          </span>
+          <span className="flex items-baseline gap-2 text-sm text-muted">
+            <span className="text-faint" aria-hidden="true">
+              ·
+            </span>
+            {familyLabel(verdict.family)}
+          </span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-2xs text-faint">
-          <span>
-            verdict in <span className="text-muted tnum">{(verdict.time_to_verdict_ms / 1000).toFixed(1)}s</span>
-          </span>
-          <span>·</span>
-          <span>
-            <span className="text-muted tnum">{verdict.sessions}</span> detonations
-          </span>
-          <span>·</span>
-          <span>
-            <span className="text-muted tnum">${verdict.cost_usd.toFixed(3)}</span>
-          </span>
-          {verdict.analyst && (
-            <>
-              <span>·</span>
-              <span>
-                analyst <span className="text-muted">{verdict.analyst}</span>
-                {verdict.fallback && <span className="text-warning"> (deterministic)</span>}
+
+        <p className="mt-3.5 max-w-prose text-base leading-relaxed text-muted">
+          {verdict.explanation}
+        </p>
+
+        <div className="mt-4 flex flex-col gap-2 border-t border-line pt-3.5">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <span className="text-xs text-faint">Evidence</span>
+            <EvidenceIds ids={verdict.evidence} />
+          </div>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-faint">
+            <span>
+              verdict in{" "}
+              <span className="tnum font-mono text-2xs text-muted">
+                {(verdict.time_to_verdict_ms / 1000).toFixed(1)}s
               </span>
-            </>
-          )}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              <span className="tnum font-mono text-2xs text-muted">{verdict.sessions}</span>{" "}
+              detonations
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="tnum font-mono text-2xs text-muted">
+              ${verdict.cost_usd.toFixed(3)}
+            </span>
+            {verdict.analyst && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  analyst <span className="font-mono text-2xs text-muted">{verdict.analyst}</span>
+                  {verdict.fallback && <span className="text-warning"> (deterministic)</span>}
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
