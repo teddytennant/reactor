@@ -4,6 +4,8 @@
   "installCommand": "npm ci --prefix web",
   "buildCommand": "npm run build --prefix web",
   "outputDirectory": "web/out",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "regions": ["iad1"],
   "headers": [
     {

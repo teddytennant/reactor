@@ -4,6 +4,8 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "out",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "regions": ["iad1"],
   "headers": [
     {
