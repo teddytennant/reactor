@@ -107,7 +107,7 @@ export function severityTone(sev: Severity | string): Tone {
   }
 }
 
-/** Human family label, e.g. "supply-chain" -> "Supply chain". */
+/** Human family label, e.g. "supply-chain" -> "Supply Chain". */
 export function familyLabel(family: string): string {
   return family
     .split("-")

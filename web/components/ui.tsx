@@ -7,25 +7,25 @@ import { severityTone } from "@/lib/signals";
  * The tone vocabulary used across the console. `Tone` (danger | warning |
  * success | neutral) comes from lib/signals; the UI layer adds two presentation
  * roles that never originate from a signal:
- *   accent — Reactor itself, interactive, the right column
- *   live   — streaming / in-flight telemetry (used sparsely)
+ *   accent — Reactor itself, interactive, the one primary action
+ *   live   — streaming / in-flight telemetry (used very sparingly)
  */
 export type UiTone = Tone | "accent" | "live";
 
 export interface ToneStyles {
   /** Foreground text in this tone. */
   text: string;
-  /** The soft tinted fill — chips, lit rows. */
+  /** The soft tinted fill — chips, lit rows. Borderless by design. */
   soft: string;
-  /** Hairline border in this tone. */
+  /** Faint edge tint in this tone. Use at low alpha; never as a drawn line. */
   border: string;
   /** Flat swatch fill. Prefer <Led> for status; this is for bars and ticks. */
   dot: string;
-  /** Solid fill + its legible on-color. */
+  /** Solid fill + its legible on-color. Reserve for one primary action. */
   solid: string;
   /** The value for `data-tone` on `.led` / `.rail-node`. */
   led: string;
-  /** Ring + halo box-shadow utility in this hue. */
+  /** Soft, wide, low-opacity cast in this hue. No rim, no halo. */
   glow: string;
 }
 
@@ -34,7 +34,7 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
   danger: {
     text: "text-danger",
     soft: "bg-danger/10",
-    border: "border-danger/35",
+    border: "border-danger/30",
     dot: "bg-danger",
     solid: "bg-danger text-danger-fg",
     led: "danger",
@@ -43,7 +43,7 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
   warning: {
     text: "text-warning",
     soft: "bg-warning/10",
-    border: "border-warning/35",
+    border: "border-warning/30",
     dot: "bg-warning",
     solid: "bg-warning text-warning-fg",
     led: "warning",
@@ -52,7 +52,7 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
   success: {
     text: "text-success",
     soft: "bg-success/10",
-    border: "border-success/35",
+    border: "border-success/30",
     dot: "bg-success",
     solid: "bg-success text-success-fg",
     led: "success",
@@ -70,7 +70,7 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
   accent: {
     text: "text-accent",
     soft: "bg-accent/10",
-    border: "border-accent/35",
+    border: "border-accent/30",
     dot: "bg-accent",
     solid: "bg-accent text-accent-fg",
     led: "accent",
@@ -78,8 +78,8 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
   },
   live: {
     text: "text-live",
-    soft: "bg-live/10",
-    border: "border-live/35",
+    soft: "bg-live/12",
+    border: "border-live/30",
     dot: "bg-live",
     solid: "bg-live text-live-fg",
     led: "live",
@@ -88,8 +88,8 @@ export const toneClasses: Record<UiTone, ToneStyles> = {
 };
 
 /**
- * A small pill. Squared-off (2px radius), hairline, 11px. Mono by request —
- * anything the machine said should pass `mono`.
+ * A small pill. Soft radius, filled, borderless — the reference's chip, not a
+ * bordered badge. Pass `mono` for machine data (package names, ids, counts).
  */
 export function Chip({
   children,
@@ -106,11 +106,10 @@ export function Chip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-px text-2xs font-medium leading-[1.35]",
+        "inline-flex items-center gap-1.5 rounded-lg px-2 py-0.5 text-xs font-medium",
         t.text,
         t.soft,
-        t.border,
-        mono && "font-mono tracking-[0.04em]",
+        mono && "font-mono text-2xs",
         className,
       )}
     >
@@ -119,43 +118,43 @@ export function Chip({
   );
 }
 
-/** Severity chip, e.g. CRITICAL. Always mono — this is a machine verdict. */
+/**
+ * Severity chip, e.g. CRITICAL. A genuine status stamp, so uppercase is earned
+ * here — sans, not mono, and only lightly letterspaced.
+ */
 export function SeverityChip({ severity }: { severity: Severity | string }) {
   const tone = severityTone(severity);
   return (
-    <Chip tone={tone} mono className="uppercase tracking-label-wide">
+    <Chip tone={tone} className="uppercase tracking-label-wide">
       {severity}
     </Chip>
   );
 }
 
-/** The core selling point badge — a description scanner provably can't see it. */
+/**
+ * The core selling point badge — a description scanner provably can't see it.
+ * Deliberately neutral: accent is reserved for the one primary action and for
+ * selection (DESIGN §1), so this claim earns its place by being legible, not by
+ * being coloured. A soft neutral chip, sentence case, no dot.
+ */
 export function StaticBlindBadge() {
   return (
     <span
       title="A description-only scanner provably cannot produce this signal."
-      className="inline-flex items-center gap-1.5 rounded-[3px] border border-accent/40 bg-accent/10 px-1.5 py-px font-mono text-2xs font-semibold uppercase leading-[1.35] tracking-label text-accent"
+      className="inline-flex items-center rounded-lg bg-surface-3 px-2 py-0.5 text-xs font-medium text-muted"
     >
-      <Led tone="accent" size="sm" />
       Static-blind
     </span>
   );
 }
 
-/** Evidence event-id pills (wire:4:tools/list, egress:7, …). */
+/** Evidence event-id pills (wire:4:tools/list, egress:7, …). Machine data. */
 export function EvidenceIds({ ids, tone = "neutral" }: { ids: string[]; tone?: UiTone }) {
   const t = toneClasses[tone];
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1.5">
       {ids.map((id) => (
-        <code
-          key={id}
-          className={cn(
-            "tnum rounded-[3px] border bg-transparent px-1 py-px font-mono text-3xs leading-[1.5]",
-            t.text,
-            t.border,
-          )}
-        >
+        <code key={id} className={cn("code-chip tnum text-3xs", t.text, t.soft)}>
           {id}
         </code>
       ))}
@@ -164,9 +163,10 @@ export function EvidenceIds({ ids, tone = "neutral" }: { ids: string[]; tone?: U
 }
 
 /**
- * The bloom-LED (DESIGN.md §2.2). A solid core with a real halo in its own hue;
- * `pulse` gives it the slow breath reserved for live things. `neutral` renders
- * as an unlit bead in a hairline socket, so state is never color alone.
+ * A status dot (DESIGN §2.2). Small, calm, flat — no neon core, no resting
+ * halo. `pulse` adds a soft slow halo and is reserved for genuinely live or
+ * streaming state. `neutral` renders as an inactive low-contrast dot, so state
+ * is never carried by color alone.
  */
 export function Led({
   tone,
@@ -188,16 +188,16 @@ export function Led({
   );
 }
 
-/** Status LED. Same contract as before; now a real lamp instead of a flat dot. */
+/** Status dot. Same contract as before. */
 export function StatusDot({ tone, pulse }: { tone: UiTone; pulse?: boolean }) {
   return <Led tone={tone} pulse={pulse} />;
 }
 
 /**
- * The containment bezel (DESIGN.md §2.1) — inset ring + corner tick marks.
- * `state` drives the tick hue: idle accent, running live, blocked danger.
- * Put nothing else with a ::before/::after primitive on this element; nest
- * `.instrument-grid` / `.scan-sweep` on a child instead.
+ * The soft containment panel (DESIGN §2.1) — the Reactor column's treatment.
+ * A slightly lifted fill, generous radius, faint edge; on `state="blocked"` the
+ * edge picks up a restrained danger tint. No corner ticks, no ring, no
+ * ornament. `state` API unchanged.
  */
 export function Bezel({
   children,
@@ -216,12 +216,15 @@ export function Bezel({
   );
 }
 
-/** A mono section label with a fading hairline and an optional right slot. */
+/**
+ * A section label: sentence-case sans, 13px, `--muted`, with an optional right
+ * slot. Grouping comes from the shared panel fill and spacing, not from rules
+ * and boxes.
+ */
 export function SectionLabel({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <span className="strip-label whitespace-nowrap">{children}</span>
-      <span className="rule" aria-hidden="true" />
+    <div className="flex items-center justify-between gap-3">
+      <span className="strip-label">{children}</span>
       {right}
     </div>
   );

@@ -13,7 +13,12 @@ const ACTION_LABEL: Record<string, string> = {
 
 /**
  * The victim transcript — what the agent *chose* to do versus its benign task.
- * on_task:false lines are the measurable hijack; they read red.
+ * Prose from an untrusted model, so it is set as quoted evidence: the strip
+ * hangs off one hairline quote rail, never a card, and stays calm and
+ * secondary. The task and the model's own words are sans prose; the action
+ * kind, the tool name and the argument paths are mono machine data. Red is
+ * reserved for fired signals and BLOCKED, so the measurable hijack reads amber
+ * here.
  */
 export function TranscriptStrip({ lines }: { lines: TranscriptLine[] }) {
   const task = lines.find((l) => l.task)?.task;
@@ -22,51 +27,70 @@ export function TranscriptStrip({ lines }: { lines: TranscriptLine[] }) {
 
   return (
     <div className="px-4 py-3">
-      <div className="strip-label mb-2">Victim transcript</div>
-      {task && (
-        <div className="mb-2 text-xs text-muted">
-          task <span className="text-fg">“{task}”</span>
-        </div>
-      )}
-      <div className="flex flex-col gap-1 font-mono text-2xs">
-        {tail.length === 0 && <div className="text-faint">no actions yet</div>}
-        {tail.map((l) => {
-          const off = !l.onTask;
-          return (
-            <div
-              key={l.id}
-              className={cn(
-                "flex animate-fade-in flex-wrap items-center gap-x-2 gap-y-1 rounded px-1.5 py-1",
-                off && "bg-danger/[0.06]",
-              )}
-            >
-              <span className="w-9 shrink-0 text-faint">d{l.session}</span>
-              <span className={cn("shrink-0", off ? "text-danger" : "text-muted")}>
-                {ACTION_LABEL[l.action] ?? l.action}
-              </span>
-              {l.tool && <span className="text-fg">{l.tool}</span>}
-              <span
-                className={cn(
-                  "shrink-0 rounded px-1 text-2xs",
-                  off ? "bg-danger/15 text-danger" : "bg-success/15 text-success",
+      <div className="flex items-center gap-2.5">
+        <span className="strip-label whitespace-nowrap">Victim transcript</span>
+        <span className="rule" aria-hidden="true" />
+        <span className="whitespace-nowrap text-xs text-faint">untrusted output</span>
+      </div>
+
+      <div className="mt-3 border-l border-line pl-4">
+        {task && (
+          <div className="pb-3">
+            <div className="text-xs text-faint">Task</div>
+            <p className="mt-1 text-sm leading-relaxed text-fg">“{task}”</p>
+          </div>
+        )}
+
+        <div className={cn("flex flex-col", task && "border-t border-line/60 pt-1")}>
+          {tail.length === 0 && (
+            <div className="py-2 text-sm text-faint">no actions yet</div>
+          )}
+          {tail.map((l) => {
+            const off = !l.onTask;
+            return (
+              <div key={l.id} className="animate-fade-in py-2">
+                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <span className="tnum w-6 shrink-0 font-mono text-2xs text-faint">
+                    d{l.session}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 font-mono text-2xs",
+                      off ? "text-warning" : "text-muted",
+                    )}
+                  >
+                    {ACTION_LABEL[l.action] ?? l.action}
+                  </span>
+                  {l.tool && (
+                    <span className="font-mono text-2xs font-medium text-fg">{l.tool}</span>
+                  )}
+                  <span
+                    className={cn(
+                      "shrink-0 text-xs",
+                      off ? "font-medium text-warning" : "text-faint",
+                    )}
+                  >
+                    {off ? "off-task" : "on-task"}
+                  </span>
+                  {l.argPaths?.map((p) => (
+                    <code key={p} className="code-chip bg-warning/10 text-warning">
+                      {p}
+                    </code>
+                  ))}
+                  {l.argCanaries?.map((c) => (
+                    <code key={c} className="code-chip bg-warning/10 font-medium text-warning">
+                      {c}
+                    </code>
+                  ))}
+                  {l.deviation && <span className="text-xs text-faint">· {l.deviation}</span>}
+                </div>
+                {l.text && (
+                  <p className="mt-1.5 pl-8 text-sm leading-relaxed text-muted">“{l.text}”</p>
                 )}
-              >
-                {off ? "off-task" : "on-task"}
-              </span>
-              {l.argPaths?.map((p) => (
-                <code key={p} className="text-danger/80">
-                  {p}
-                </code>
-              ))}
-              {l.argCanaries?.map((c) => (
-                <code key={c} className="rounded bg-danger/15 px-1 text-danger">
-                  {c}
-                </code>
-              ))}
-              {l.deviation && <span className="text-faint">· {l.deviation}</span>}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

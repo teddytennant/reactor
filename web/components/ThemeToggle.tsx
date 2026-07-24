@@ -28,9 +28,9 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label="Toggle color theme"
-      className="focus-ring grid h-7 w-7 place-items-center rounded-md border border-line/80 bg-surface/60 text-faint transition-colors duration-200 hover:border-line-strong hover:text-fg"
+      className="focus-ring grid h-9 w-9 place-items-center rounded-xl text-muted transition-colors duration-200 hover:bg-surface-2 hover:text-fg"
     >
-      {mounted && dark ? <Moon size={13} strokeWidth={1.9} /> : <Sun size={13} strokeWidth={1.9} />}
+      {mounted && dark ? <Moon size={16} strokeWidth={1.75} /> : <Sun size={16} strokeWidth={1.75} />}
     </button>
   );
 }

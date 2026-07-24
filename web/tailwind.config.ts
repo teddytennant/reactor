@@ -45,6 +45,7 @@ const config: Config = {
     "tnum",
     "strip-label",
     "telemetry",
+    "code-chip",
     "chrome-edge",
     "focus-ring",
     "console-veil",
@@ -83,30 +84,37 @@ const config: Config = {
         mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       /**
-       * Tighter, denser scale. Display sizes lose a step and gain negative
-       * tracking; body never goes below 12px (`text-xs`). `text-3xs` is for
-       * mono gutter indices ONLY — never prose.
+       * Comfortable, not compressed — the reference breathes. Sans carries the
+       * interface: `text-sm` (13px) is the section-label size, `text-base`
+       * (15px / 24px) is body prose. `text-3xs` and `text-2xs` are for mono
+       * machine data only (evidence ids, byte counts) — never prose.
        */
       fontSize: {
-        "3xs": ["0.625rem", { lineHeight: "0.875rem", letterSpacing: "0.1em" }],
-        "2xs": ["0.6875rem", { lineHeight: "0.9375rem", letterSpacing: "0.01em" }],
-        label: ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.14em" }],
-        xs: ["0.75rem", { lineHeight: "1.0625rem" }],
-        sm: ["0.8125rem", { lineHeight: "1.1875rem" }],
-        base: ["0.9375rem", { lineHeight: "1.375rem" }],
-        lg: ["1.0625rem", { lineHeight: "1.5rem", letterSpacing: "-0.01em" }],
-        xl: ["1.1875rem", { lineHeight: "1.625rem", letterSpacing: "-0.014em" }],
-        "2xl": ["1.4375rem", { lineHeight: "1.8125rem", letterSpacing: "-0.019em" }],
-        "3xl": ["1.75rem", { lineHeight: "2.0625rem", letterSpacing: "-0.022em" }],
-        "4xl": ["2.125rem", { lineHeight: "2.375rem", letterSpacing: "-0.026em" }],
-        "5xl": ["2.75rem", { lineHeight: "2.9375rem", letterSpacing: "-0.03em" }],
+        "3xs": ["0.625rem", { lineHeight: "0.9375rem", letterSpacing: "0.005em" }],
+        "2xs": ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.005em" }],
+        label: ["0.8125rem", { lineHeight: "1.25rem" }],
+        xs: ["0.75rem", { lineHeight: "1.125rem" }],
+        sm: ["0.8125rem", { lineHeight: "1.25rem" }],
+        base: ["0.9375rem", { lineHeight: "1.5rem" }],
+        lg: ["1.0625rem", { lineHeight: "1.625rem", letterSpacing: "-0.008em" }],
+        xl: ["1.1875rem", { lineHeight: "1.75rem", letterSpacing: "-0.012em" }],
+        "2xl": ["1.375rem", { lineHeight: "1.875rem", letterSpacing: "-0.016em" }],
+        "3xl": ["1.6875rem", { lineHeight: "2.125rem", letterSpacing: "-0.02em" }],
+        "4xl": ["2.0625rem", { lineHeight: "2.5rem", letterSpacing: "-0.022em" }],
+        "5xl": ["2.625rem", { lineHeight: "3rem", letterSpacing: "-0.026em" }],
       },
+      /**
+       * Retained names, softened hard. Uppercase letterspacing is now reserved
+       * for genuine status stamps (BLOCKED, CLEAN) — never routine labels.
+       */
       letterSpacing: {
-        label: "0.14em",
-        "label-wide": "0.18em",
+        label: "0.02em",
+        "label-wide": "0.08em",
       },
+      // Generous radii. Nothing sharp.
       borderRadius: {
-        lg: "0.5rem",
+        md: "0.4375rem",
+        lg: "0.625rem",
         xl: "0.75rem",
         "2xl": "1rem",
       },
@@ -115,24 +123,24 @@ const config: Config = {
         instrument: "cubic-bezier(0.16,1,0.3,1)",
       },
       boxShadow: {
-        // Elevation is hairline + inner top highlight, not a drop shadow.
+        // Soft, wide, low-opacity — or absent. Never a hard drop shadow.
         panel: "var(--panel-shadow)",
         "panel-flat": "var(--panel-shadow-flat)",
         float:
-          "var(--panel-shadow-flat), 0 18px 48px -26px rgb(var(--shadow) / 0.55), 0 2px 10px -6px rgb(var(--shadow) / 0.4)",
+          "0 2px 6px -2px rgb(var(--shadow) / 0.18), 0 24px 60px -30px rgb(var(--shadow) / 0.5)",
         card: "var(--panel-shadow)",
         "card-dark": "var(--panel-shadow)",
-        // Ring + halo in a role's own hue. For lit rows, chips and markers.
-        "glow-accent":
-          "0 0 0 1px rgb(var(--accent) / 0.28), 0 0 26px -8px rgb(var(--accent) / 0.45)",
-        "glow-live":
-          "0 0 0 1px rgb(var(--live) / 0.28), 0 0 26px -8px rgb(var(--live) / 0.45)",
-        "glow-danger":
-          "0 0 0 1px rgb(var(--danger) / 0.34), 0 0 28px -6px rgb(var(--danger) / 0.5)",
-        "glow-success":
-          "0 0 0 1px rgb(var(--success) / 0.28), 0 0 26px -8px rgb(var(--success) / 0.42)",
-        "glow-warning":
-          "0 0 0 1px rgb(var(--warning) / 0.28), 0 0 26px -8px rgb(var(--warning) / 0.42)",
+        /**
+         * `shadow-glow-*` — names retained because siblings use them, but the
+         * neon rim is gone. These are now soft, wide, low-opacity casts tinted
+         * by the role. No `0 0 0 1px` ring, no visible halo. Prefer a border
+         * tint (`border-danger/30`) over reaching for these at all.
+         */
+        "glow-accent": "0 8px 28px -14px rgb(var(--accent) / 0.35)",
+        "glow-live": "0 8px 28px -14px rgb(var(--live) / 0.3)",
+        "glow-danger": "0 8px 28px -14px rgb(var(--danger) / 0.4)",
+        "glow-success": "0 8px 28px -14px rgb(var(--success) / 0.32)",
+        "glow-warning": "0 8px 28px -14px rgb(var(--warning) / 0.32)",
       },
       keyframes: {
         "fade-slide-up": {
@@ -153,13 +161,11 @@ const config: Config = {
           "60%": { opacity: "1", transform: "translateY(0) scale(1.004)" },
           "100%": { opacity: "1", transform: "translateY(0) scale(1)" },
         },
+        // Softened: a brief warm danger cast that settles, not a neon rim.
         "danger-pulse": {
-          "0%": { boxShadow: "0 0 0 0 rgb(var(--danger) / 0.0)" },
-          "35%": {
-            boxShadow:
-              "0 0 0 3px rgb(var(--danger) / 0.28), 0 0 30px -4px rgb(var(--danger) / 0.55)",
-          },
-          "100%": { boxShadow: "0 0 0 1px rgb(var(--danger) / 0.28)" },
+          "0%": { boxShadow: "0 0 0 0 rgb(var(--danger) / 0)" },
+          "35%": { boxShadow: "0 6px 26px -12px rgb(var(--danger) / 0.55)" },
+          "100%": { boxShadow: "0 6px 26px -16px rgb(var(--danger) / 0.25)" },
         },
         "verdict-in": {
           "0%": { opacity: "0", transform: "translateY(14px) scale(0.97)" },
@@ -193,10 +199,11 @@ const config: Config = {
         sweep: "sweep 1.6s ease-in-out infinite",
         "bar-grow": "bar-grow 0.9s cubic-bezier(0.16,1,0.3,1) both",
         // These three reference @keyframes declared in globals.css (they are
-        // also used directly by .core-bloom / .scan-sweep / .led).
-        "core-breathe": "core-breathe 5.5s cubic-bezier(0.4,0,0.6,1) infinite",
-        "scan-sweep": "scan-sweep 2.6s cubic-bezier(0.45,0,0.55,1) infinite",
-        "led-pulse": "led-pulse 2.4s cubic-bezier(0.4,0,0.6,1) infinite",
+        // also used directly by .core-bloom / .scan-sweep / .led). All three
+        // are now the same slow opacity breath — no travel, no flash.
+        "core-breathe": "core-breathe 6s cubic-bezier(0.4,0,0.6,1) infinite",
+        "scan-sweep": "scan-sweep 3.2s cubic-bezier(0.4,0,0.6,1) infinite",
+        "led-pulse": "led-pulse 2.8s cubic-bezier(0.4,0,0.6,1) infinite",
       },
     },
   },

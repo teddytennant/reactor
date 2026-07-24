@@ -213,3 +213,128 @@ func TestSeverityOrdering(t *testing.T) {
 		t.Fatalf("most severe should sort first, got %s", sigs[0].Severity)
 	}
 }
+
+// benign_profile is the only thing that turns a run into ALLOWED, so what
+// suppresses it is the false-negative frontier. Each of these traces is an
+// otherwise-ordinary session — the server was listed and called on-task — with
+// one disqualifying behaviour added, and none of them may end up ALLOWED.
+// (Which oracle does the suppressing varies; that a verdict cannot come out
+// benign is the contract.)
+func TestBenignProfileSuppressedByEachDisqualifier(t *testing.T) {
+	base := func() []events.Event {
+		return []events.Event{
+			wireList("wire:1:tools/list", 1, 100, "echo", "Echo a message.", "aaa", 15),
+			wireCall("wire:1:tools/call", 1, 200, "echo", nil, nil),
+			tx("tx:1:tool_call", 1, 200, events.ActToolCall, "echo", true, ""),
+		}
+	}
+	cases := []struct {
+		name  string
+		extra events.Event
+	}{
+		{"a bait file was touched",
+			beh("fs.read:1", 300, events.BehavioralEvent{Op: events.OpFileRead, Bait: true, BaitLabel: "dotenv"})},
+		{"a canary was carried anywhere",
+			beh("egress:1", 300, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "127.0.0.1", Canaries: []string{"REACTOR-ctx"}})},
+		{"a write escaped the install dir",
+			beh("fs.write:1", 300, events.BehavioralEvent{Op: events.OpFileWrite, InInstall: false, Path: "/home/agent/.bashrc"})},
+		{"a delete escaped the install dir",
+			beh("fs.delete:1", 300, events.BehavioralEvent{Op: events.OpFileDelete, InInstall: false, Path: "/home/agent/.ssh/known_hosts"})},
+	}
+	for _, c := range cases {
+		in := Input{SinkHosts: []string{"sink.internal"}, Events: append(base(), c.extra)}
+		if b := find(Evaluate(in), events.SigBenignProfile); b != nil {
+			t.Errorf("%s: benign_profile still fired", c.name)
+		}
+	}
+}
+
+// One allowlisted destination is normal for a benign server (a version check,
+// a docs fetch). Two distinct non-sink hosts is a fan-out that no longer looks
+// like ordinary operation, and must not be waved through as benign.
+func TestBenignProfileToleratesOneHostButNotTwo(t *testing.T) {
+	base := []events.Event{
+		wireList("wire:1:tools/list", 1, 100, "echo", "Echo a message.", "aaa", 15),
+		// The server has to have been called before its egress can be ordinary
+		// operation; egress before the first tool call is an install hook.
+		wireCall("wire:1:tools/call", 1, 200, "echo", nil, nil),
+		beh("egress:1", 300, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "registry.example.com"}),
+		// Sink-host and loopback traffic is our own containment boundary and
+		// never counts against the allowance.
+		beh("egress:2", 310, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "sink.internal"}),
+		beh("egress:3", 320, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "127.0.0.1"}),
+	}
+	in := Input{SinkHosts: []string{"sink.internal"}, Events: base}
+	if find(Evaluate(in), events.SigBenignProfile) == nil {
+		t.Fatal("one allowlisted host should still read as benign")
+	}
+	in.Events = append(base, beh("egress:4", 330, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "cdn.other.example"}))
+	if find(Evaluate(in), events.SigBenignProfile) != nil {
+		t.Fatal("two distinct external hosts must not be reported as a benign profile")
+	}
+}
+
+// Egress that already counts as an exfil must not be double-reported as a
+// sleeper beacon — one behaviour, one signal, or the scorecard inflates.
+func TestSleeperBeaconYieldsToCanaryCarryingEgress(t *testing.T) {
+	in := Input{Events: []events.Event{
+		wireCall("wire:1:tools/call", 1, 100, "search", nil, nil),
+		wireCall("wire:2:tools/call", 2, 200, "search", nil, nil),
+		beh("egress:1", 5000, events.BehavioralEvent{
+			Op: events.OpEgressHTTP, Host: "c2.attacker.net",
+			Canaries: []string{"REACTOR-env"}, CanaryKinds: []string{"file:dotenv"}}),
+	}}
+	sigs := Evaluate(in)
+	if find(sigs, events.SigCanaryExfil) == nil {
+		t.Fatal("canary_exfil should own this event")
+	}
+	if find(sigs, events.SigSleeperBeacon) != nil {
+		t.Fatal("the same egress must not also be counted as a sleeper beacon")
+	}
+}
+
+// A canary seen at both the wire and the sink is one exfiltration with two
+// pieces of evidence, not two findings.
+func TestDedupeMergesEvidenceAcrossCollectors(t *testing.T) {
+	km := kindMap(map[string]string{"REACTOR-ctx": "context"})
+	in := Input{CanaryKind: km, Events: []events.Event{
+		wireCall("wire:4:tools/call", 4, 400, "search", []string{"REACTOR-ctx"}, nil),
+		beh("egress:1", 450, events.BehavioralEvent{Op: events.OpEgressHTTP, Host: "127.0.0.1",
+			Canaries: []string{"REACTOR-ctx"}, CanaryKinds: []string{"context:system_prompt"}}),
+	}}
+	var n int
+	for _, s := range Evaluate(in) {
+		if s.Type == events.SigContextExfil {
+			n++
+			if len(s.Evidence) != 2 {
+				t.Fatalf("merged signal should cite both collectors: %v", s.Evidence)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly one context_exfil, got %d", n)
+	}
+}
+
+// Evidence ids are what the verdict cites, so they must be stable and
+// deduplicated regardless of how many raw events fed a signal.
+func TestEvidenceIsUniqueAndSorted(t *testing.T) {
+	in := Input{Events: []events.Event{
+		beh("fs.read:2", 310, events.BehavioralEvent{Op: events.OpFileRead, Bait: true, BaitLabel: "ssh_key"}),
+		beh("fs.read:1", 300, events.BehavioralEvent{Op: events.OpFileRead, Bait: true, BaitLabel: "dotenv"}),
+		beh("fs.read:1", 300, events.BehavioralEvent{Op: events.OpFileRead, Bait: true, BaitLabel: "dotenv"}),
+	}}
+	cr := find(Evaluate(in), events.SigCanaryRead)
+	if cr == nil {
+		t.Fatal("canary_read not fired")
+	}
+	want := []string{"fs.read:1", "fs.read:2"}
+	if len(cr.Evidence) != len(want) {
+		t.Fatalf("evidence = %v, want %v", cr.Evidence, want)
+	}
+	for i := range want {
+		if cr.Evidence[i] != want[i] {
+			t.Fatalf("evidence = %v, want %v", cr.Evidence, want)
+		}
+	}
+}

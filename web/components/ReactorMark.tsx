@@ -1,13 +1,12 @@
 import { cn } from "@/lib/cn";
 
 /**
- * The Reactor mark — a containment hexagon with a lit core.
+ * The Reactor mark — a containment hexagon with a solid core.
  *
- * Tuned to read at 20px: the hexagon is a flat 1.6px stroke on a 24px grid with
- * squared-off vertices, the containment ring is a broken hexagon (three arcs of
- * a second, smaller hex) so it never mushes into the outer shape, and the core
- * is a solid accent disc sitting inside its own bloom. Stroke inherits
- * currentColor; the core is always the accent token.
+ * Tuned to read at 20px: a flat 1.6px stroke on a 24px grid with squared-off
+ * vertices, a faint inner containment seam, and a solid accent core. Calm and
+ * flat — no bloom, no glow (DESIGN §1/§2). Stroke inherits currentColor; the
+ * core is the accent token.
  */
 export function ReactorMark({ size = 22, className }: { size?: number; className?: string }) {
   return (
@@ -26,28 +25,27 @@ export function ReactorMark({ size = 22, className }: { size?: number; className
         strokeWidth="1.6"
         strokeLinejoin="round"
       />
-      {/* Inner containment ring, broken at the three lower vertices — reads as
+      {/* Inner containment seam, broken at the three lower vertices — reads as
           a shield seam rather than a second outline. */}
       <path
         d="M12 6.3 16.7 9v1.9M16.7 15 12 17.7 7.3 15M7.3 10.9V9L12 6.3"
-        stroke="rgb(var(--accent))"
+        stroke="currentColor"
         strokeWidth="1.15"
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity="0.55"
+        opacity="0.32"
       />
-      {/* Core bloom + core. */}
-      <circle cx="12" cy="12" r="4.1" fill="rgb(var(--accent))" opacity="0.16" />
-      <circle cx="12" cy="12" r="2.3" fill="rgb(var(--accent))" />
+      {/* The core. Flat, solid, no bloom. */}
+      <circle cx="12" cy="12" r="2.5" fill="rgb(var(--accent))" />
     </svg>
   );
 }
 
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <div className={cn("flex select-none items-center gap-2", className)}>
+    <div className={cn("flex select-none items-center gap-2.5", className)}>
       <ReactorMark size={20} className="text-fg" />
-      <span className="text-[15px] font-semibold leading-none tracking-[-0.025em] text-fg">
+      <span className="text-[15px] font-semibold leading-none tracking-[-0.015em] text-fg">
         Reactor
       </span>
     </div>

@@ -98,7 +98,8 @@ All JSON bodies use the types in `internal/events` unless noted.
 |---|---|---|---|
 | `GET` | `/api/health` | | `{ "ok", "drivers":[{"name","available","why"}], "analyst", "victim":{"model","served","simulated","temp","seed","revision"}, "zoo": <int> }` |
 | `GET` | `/api/artifacts` | | `Artifact[]` (the zoo, for the picker) |
-| `POST` | `/api/detonate` | `{ "artifact_id": "...", "sessions": 5, "network": false }` or a full `Artifact` under `"artifact"` | `{ "detonation_id": "det_..." }` |
+| `POST` | `/api/upload` | `multipart/form-data`, one file part (any field name) + optional `kind`/`name`/`source`/`install` text fields | `UploadResponse` (see below) |
+| `POST` | `/api/detonate` | `{ "artifact_id": "...", "sessions": 5, "network": false }`, or a full `Artifact` under `"artifact"`, or `{ "upload_id": "up_..." }`, or `{ "repo": "https://...", "ref": "main" }` | `{ "detonation_id": "det_..." }` |
 | `GET` | `/api/detonations` | | `DetonationReport[]` (summaries, newest first) |
 | `GET` | `/api/detonations/{id}` | | full `DetonationReport` |
 | `GET` | `/api/events?detonation={id}` | SSE | `text/event-stream` of `Event`; replays history then live. Each SSE `data:` line is one `Event`. Event name = `Event.kind`. |
@@ -106,6 +107,61 @@ All JSON bodies use the types in `internal/events` unless noted.
 | `GET` | `/api/scorecard` | | offline `eval/scorecard.json` if present, else a live scorecard derived from completed detonations |
 
 CORS: `*` origin, `GET/POST/OPTIONS`, `Content-Type` allowed.
+
+Errors are `text/plain` on every endpoint (`http.Error`), with a message meant to be shown to a person. Statuses: `400` malformed request or a refused archive/url, `404` unknown detonation or expired upload, `405` wrong method, `413` over a size ceiling, `415` unsupported archive type, `504` clone timeout, `500` engine-side failure.
+
+### Artifact ingest (`/api/upload` + the repo path)
+
+Two ways to detonate something that is not in the zoo. Both stage into a
+per-detonation directory that is deleted when the detonation ends; neither ever
+puts a host path in a response.
+
+`POST /api/upload` — one zip/tar/tar.gz, streamed to disk and sha256'd as it
+streams. The archive type is decided by content, not by filename or
+`Content-Type`. Response:
+
+```json
+{
+  "upload_id": "up_9bae92927ce6",
+  "name": "notes-mcp.zip", "kind": "mcp_server", "archive": "zip",
+  "sha256": "<64 hex, of exactly the bytes received>",
+  "size_bytes": 754, "files": 3, "unpacked_bytes": 78, "skipped_entries": 0,
+  "source": "node server.mjs", "install": "npm install",
+  "expires_ms": 1784925698559,
+  "artifact": { "id": "art_...", "kind": "...", "name": "...", "source": "...", "sha256": "...", "note": "...", "env": {"_install": "..."} }
+}
+```
+
+`kind`/`source`/`install` are inferred from the entry names (`server.mjs` ⇒
+`mcp_server`, `SKILL.md` ⇒ `skill`, `package.json` ⇒ `npm install`, otherwise
+`zip`); the form fields and the `artifact` override on detonate both beat them.
+`skipped_entries` counts symlinks, hardlinks and device nodes that were refused
+rather than unpacked.
+
+Then `POST /api/detonate` with `{"upload_id": "up_...", "sessions": 5}`, or
+`{"repo": "https://github.com/owner/repo", "ref": "main"}`. An optional
+`"artifact"` alongside either refines `name`, `kind`, `source`, `args`, `note`
+and `env._install` — `env._dir` is set by the engine and is never taken from the
+client. An upload can be detonated more than once; it is swept after its TTL.
+
+Ceilings (all `engine.Config` fields, all overridable):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `MaxUploadBytes` | 64 MiB | one uploaded file → `413` |
+| `MaxExtractBytes` | 256 MiB | what an archive or clone may become on disk → `413` |
+| `MaxExtractFiles` | 20000 | file count in an archive or clone → `413` |
+| `MaxCloneBytes` | 256 MiB | a clone is killed mid-flight past this → `413` |
+| `CloneTimeout` | 90s | one `git clone` → `504` |
+| `UploadTTL` | 2h | unclaimed uploads are swept |
+| `WorkDir` | `$TMPDIR/reactor` (`REACTOR_WORK_DIR`) | staging root, removed by `Engine.Close` |
+| `AllowLocalRepos` | false (`REACTOR_ALLOW_LOCAL_REPOS=1`) | dev only: permits `file://` and private hosts |
+
+Repo urls are `https` only — no `ssh`/`git@`/`git://`/`file://`, no credentials
+in the url, no loopback/private/link-local IP literals. Refs must look like a
+branch, tag or sha. Clones are `--depth 1 --single-branch --no-tags`, with
+hooks, templates, credential helpers, submodules and every non-https transport
+disabled, and `.git` is removed before the tree reaches a chamber.
 
 SSE framing: `event: <kind>\ndata: <Event json>\n\n`. A heartbeat `event: ping` is sent every 15s. The client keys rendering off `Event.kind` and the nested payload. `detonation` query param filters the stream; omit it for the global feed.
 

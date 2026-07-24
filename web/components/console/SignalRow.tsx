@@ -16,7 +16,13 @@ import {
 import { cn } from "@/lib/cn";
 import type { SignalView } from "@/lib/reducer";
 import { signalMeta } from "@/lib/signals";
-import { EvidenceIds, SeverityChip, StaticBlindBadge, toneClasses } from "@/components/ui";
+import {
+  EvidenceIds,
+  SeverityChip,
+  StaticBlindBadge,
+  toneClasses,
+  type UiTone,
+} from "@/components/ui";
 
 const ICONS: Record<string, LucideIcon> = {
   rug_pull: GitCompareArrows,
@@ -32,39 +38,67 @@ const ICONS: Record<string, LucideIcon> = {
   benign_profile: ShieldCheck,
 };
 
+/**
+ * A fired oracle signal — the catch. Sans carries the row: the signal name, its
+ * plain-English gloss and the finding are prose; only the type slug and the
+ * evidence ids are mono machine data. Two stamps sit on the title line: the
+ * severity chip, so danger ranks visibly above warning, and — when the oracle
+ * is one a description scanner provably cannot produce — the static-blind
+ * badge, which is the whole argument for Reactor existing.
+ *
+ * Not a card (DESIGN §2.4): signals sit on the chamber's own fill and are
+ * separated by spacing and one hairline. No outline, no left rail, no wash —
+ * that was three treatments saying the same thing. Danger is carried by the
+ * ink alone: the icon and the signal name go red, everything else stays neutral
+ * prose, so warning and success signals read as clearly subordinate.
+ */
 export function SignalRow({ signal }: { signal: SignalView }) {
   const meta = signalMeta(signal.type);
-  const t = toneClasses[meta.tone === "success" ? "success" : meta.tone];
+  const tone: UiTone = meta.tone === "success" ? "success" : meta.tone;
+  const t = toneClasses[tone];
   const Icon = ICONS[signal.type] ?? TriangleAlert;
+  const alarm = meta.tone === "danger";
 
   return (
-    <div
-      className={cn(
-        "animate-signal-snap rounded-xl border p-3.5",
-        t.border,
-        t.soft,
-      )}
-    >
+    <article className="hairline animate-fade-slide-up pt-4">
       <div className="flex items-start gap-3">
-        <span className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg", t.soft, t.text)}>
-          <Icon size={17} />
-        </span>
+        <Icon size={16} strokeWidth={1.9} className={cn("mt-0.5 shrink-0", t.text)} />
+
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-mono text-[13px] font-semibold text-fg">{signal.type}</span>
-            <span className={cn("text-xs font-medium", t.text)}>{meta.label}</span>
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <h3
+              className={cn(
+                "text-base font-semibold tracking-tight",
+                alarm ? "text-danger" : "text-fg",
+              )}
+            >
+              {meta.label}
+            </h3>
             <SeverityChip severity={signal.severity} />
             {signal.static_blind && <StaticBlindBadge />}
           </div>
-          <p className="mt-1 font-mono text-xs leading-relaxed text-muted">{signal.summary}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-2xs uppercase tracking-wide text-faint">
-              {signal.family} · deton. {signal.session}
-            </span>
-            <EvidenceIds ids={signal.evidence} tone={meta.tone === "success" ? "success" : meta.tone} />
+
+          <div className="tnum mt-1.5 font-mono text-2xs text-faint">
+            {signal.type} · {signal.family}
+            {signal.session !== undefined && <> · deton. {signal.session}</>}
+          </div>
+
+          <p className="mt-2 text-sm leading-relaxed text-muted">{meta.gloss}</p>
+          <p
+            className={cn(
+              "mt-1.5 text-sm leading-relaxed",
+              alarm ? "text-fg" : "text-muted",
+            )}
+          >
+            {signal.summary}
+          </p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <span className="text-xs text-faint">Evidence</span>
+            <EvidenceIds ids={signal.evidence} />
           </div>
         </div>
       </div>
-    </div>
+    </article>
   );
 }

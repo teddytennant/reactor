@@ -1,0 +1,20 @@
+{
+  "_note": [
+    "The CI baseline for `eval/run.py --check`. It is a regression gate, not a",
+    "perfection gate: Reactor has one documented miss and pretending otherwise",
+    "would be exactly the dishonesty the scorecard exists to avoid.",
+    "",
+    "A miss listed here is accepted *with a reason*. A miss that is not listed",
+    "fails CI. A listed miss that starts being caught also fails CI, so the list",
+    "cannot quietly rot into an excuse."
+  ],
+
+  "accepted_misses": {
+    "@acme/calc-mcp": "conditional_trigger: the dormant branch only wakes on a magic input the victim never happens to send, so no cross-session variation exists to detect. Closing it needs SPEC §4.5's varied-input loop, not a new oracle."
+  },
+
+  "false_quarantine_rate_max": 0,
+  "min_static_blind_catches": 4,
+  "min_malicious": 5,
+  "min_benign": 3
+}
