@@ -33,7 +33,17 @@ func cors(h http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Reactor-Daytona-Key, X-Reactor-Daytona-Url, X-Reactor-Fireworks-Key")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		// Private Network Access (Chromium): a page on a public origin reaching
+		// a loopback server must be granted it explicitly, on the preflight, or
+		// the request is blocked before it arrives. The deployed console at
+		// reactor.teddytennant.com talking to the visitor's own engine on
+		// 127.0.0.1 is exactly that case — without this the browser refuses and
+		// the console reports the engine as unreachable.
+		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+		}
 		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
