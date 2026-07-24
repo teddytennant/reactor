@@ -1,6 +1,5 @@
 "use client";
 
-import { TriangleAlert } from "lucide-react";
 import type { ChamberInfo } from "@/lib/events";
 import { cn } from "@/lib/cn";
 import { Led, type UiTone } from "@/components/ui";
@@ -140,12 +139,6 @@ export function ChamberHeader({
               v={chamber.revision.slice(0, 7)}
               title={`revision ${chamber.revision}`}
             />
-            {chamber.simulated && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-warning/10 px-2 py-0.5 text-2xs font-medium text-warning">
-                <TriangleAlert size={11} aria-hidden="true" />
-                Simulated victim
-              </span>
-            )}
           </>
         ) : (
           <span className="text-2xs text-faint">Chamber not provisioned</span>

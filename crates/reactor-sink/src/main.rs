@@ -144,6 +144,9 @@ async fn main() {
 /// absolute URI carries the intended host. Either way it is logged and the
 /// artifact gets a benign 200 so evasion-aware code believes it "worked" — while
 /// nothing leaves the chamber.
+///
+/// GET/HEAD /healthz is the engine's readiness probe and is deliberately not
+/// logged: a logged probe used to fire install_hook on every benign detonation.
 async fn handle(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -158,7 +161,7 @@ async fn handle(
         be.canaries = t;
         be.canary_kinds = k;
         state.emit(be);
-        return (StatusCode::FORBIDDEN, "reactor-sink: egress contained");
+        return (StatusCode::FORBIDDEN, "reactor-sink: egress contained").into_response();
     }
 
     let host = uri
@@ -168,6 +171,12 @@ async fn handle(
         .unwrap_or_default();
     let port = uri.port_u16().map(|p| p as i64).unwrap_or(80);
     let url_path = uri.path().to_string();
+
+    // Only the exact local probe is silent. A beacon POST to /healthz, or a
+    // forward-proxy request whose path happens to match, still logs.
+    if (method == Method::GET || method == Method::HEAD) && url_path == "/healthz" {
+        return (StatusCode::OK, "ok").into_response();
+    }
 
     let body_str = String::from_utf8_lossy(&body);
     let header_blob = headers
@@ -193,7 +202,7 @@ async fn handle(
     };
     state.emit(be);
 
-    (StatusCode::OK, "{\"ok\":true}")
+    (StatusCode::OK, "{\"ok\":true}").into_response()
 }
 
 /// Minimal mock DNS: resolve every A query to the sink and log the lookup, so a

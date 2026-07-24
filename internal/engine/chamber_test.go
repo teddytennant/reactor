@@ -218,7 +218,7 @@ func TestPortProbeScriptSeesAListenerAndItsAbsence(t *testing.T) {
 	open := ln.Addr().(*net.TCPAddr).Port
 
 	if code := runScript(t, portProbeScript(open, 3)); code == probeNoTool {
-		t.Skip("neither curl nor python3 available to probe with")
+		t.Skip("neither python3, nc, nor curl available to probe with")
 	} else if code != 0 {
 		t.Fatalf("probe of a listening port exited %d, want 0", code)
 	}

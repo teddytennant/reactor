@@ -76,6 +76,9 @@ type sink struct {
 // to us), a forward-proxy absolute-URI request (HTTP_PROXY), and CONNECT (HTTPS
 // tunnels — we log the host and refuse the tunnel, so TLS beacons are recorded
 // even though we can't read their bodies).
+//
+// GET/HEAD /healthz is the engine's readiness probe and is deliberately not
+// logged: a logged probe used to fire install_hook on every benign detonation.
 func (s *sink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		s.logConnect(r)
@@ -90,6 +93,11 @@ func (s *sink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.IsAbs() { // forward-proxy request
 		host = r.URL.Host
 		urlPath = r.URL.Path
+	}
+	if isSinkHealthz(r.Method, urlPath) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+		return
 	}
 
 	// Canary matching runs over the full request surface, not just the body.
@@ -118,6 +126,16 @@ func (s *sink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"ok":true}`)
+}
+
+// isSinkHealthz is the engine readiness path. Only the exact local probe
+// (GET/HEAD /healthz) is silent — a beacon that posts to /healthz, or a
+// forward-proxy request whose path happens to be /healthz, still logs.
+func isSinkHealthz(method, path string) bool {
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	return path == "/healthz"
 }
 
 func (s *sink) logConnect(r *http.Request) {

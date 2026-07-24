@@ -1011,18 +1011,23 @@ const probeNoTool = 2
 // wherever it runs, retrying up to `tries` times. Exit 0: something answered.
 // Exit 1: nothing did. Exit 2 (probeNoTool): no probe tool present.
 //
-// curl first because it is the one thing guaranteed in the sandbox image (nc is
-// not); python3 covers a host or image without it. Any curl exit other than 7
-// (couldn't connect) means the port answered — a timeout or an HTTP error is
-// still proof of a listener.
+// The probe is deliberately TCP-only by default. An earlier curl GET / against
+// the sink was logged as egress_http and the install_hook oracle treated our
+// own readiness check as an install-time beacon — every benign control then
+// came back MALICIOUS. python3's connect_ex is preferred (no HTTP, no body);
+// nc -z covers images without python. curl is last-resort only, aimed at the
+// sink's unlogged /healthz so a pure-curl image still cannot poison the log.
 func portProbeScript(port, tries int) string {
 	py := fmt.Sprintf(`import socket,sys
 s=socket.socket(); s.settimeout(2)
 sys.exit(0 if s.connect_ex(("127.0.0.1",%d))==0 else 1)`, port)
-	return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then
-  probe() { curl -s -o /dev/null -m 2 --noproxy '*' "http://127.0.0.1:%[1]d/"; [ $? -ne 7 ]; }
-elif command -v python3 >/dev/null 2>&1; then
+	return fmt.Sprintf(`if command -v python3 >/dev/null 2>&1; then
   probe() { python3 -c %[2]s >/dev/null 2>&1; }
+elif command -v nc >/dev/null 2>&1; then
+  probe() { nc -z -w 2 127.0.0.1 %[1]d >/dev/null 2>&1; }
+elif command -v curl >/dev/null 2>&1; then
+  # Last resort. /healthz is answered by the sink without writing sink.jsonl.
+  probe() { curl -s -o /dev/null -m 2 --noproxy '*' "http://127.0.0.1:%[1]d/healthz"; [ $? -ne 7 ]; }
 else
   exit %[4]d
 fi
