@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -282,8 +283,32 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 		det.emit(e.bus, life(events.PhaseDestroyed, "chamber destroyed", nil))
 	}()
 
+	// Every collector, log and trace in this run writes under a handful of fixed
+	// directories. Make them before anything is launched: a driver whose chamber
+	// starts as a bare HOME (a fresh remote sandbox does) otherwise fails the
+	// first shell redirect into logs/ — and a redirect that cannot be opened
+	// takes the process with it while leaving no log to say so.
+	if err := prepareChamberDirs(ctx, ch); err != nil {
+		e.fail(det, "prepare chamber: "+err.Error())
+		return
+	}
+
+	// The chamber components are host-built executables, and the path they were
+	// built at is a HOST path — meaningless inside a remote sandbox, where using
+	// it as argv[0] is exit 127. Stage them into the chamber and use the paths it
+	// hands back for the rest of this detonation. The result is per-detonation on
+	// purpose: e.bins is shared by concurrent runs and is never mutated.
+	det.emit(e.bus, life(events.PhaseProvisioning,
+		"staging chamber binaries ("+binSummary(e.bins)+")", nil))
+	bin, err := stageBins(ctx, ch, e.bins)
+	if err != nil {
+		e.fail(det, "stage chamber binaries: "+err.Error())
+		return
+	}
+
 	home := ch.Home()
-	sinkPort := freePort(9931)
+	// Free INSIDE the chamber, which is the only place the answer matters.
+	sinkPort := pickSinkPort(ctx, ch, defaultSinkPort)
 	b := bait.New(bait.Options{
 		Home: home, InstallDir: filepath.Join(home, "artifact"),
 		SinkHost: "127.0.0.1", SinkPort: sinkPort,
@@ -339,7 +364,7 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 
 	logDir := filepath.Join(home, "logs")
 	sinkHandle, err := ch.Start(ctx, chamber.ExecOpts{
-		Cmd:        []string{e.bins.sink, "--http", fmt.Sprintf("127.0.0.1:%d", sinkPort), "--dns", "", "--log-dir", logDir, "--canaries", canaryPath},
+		Cmd:        []string{bin.sink, "--http", fmt.Sprintf("127.0.0.1:%d", sinkPort), "--dns", "", "--log-dir", logDir, "--canaries", canaryPath},
 		Env:        map[string]string{"REACTOR_LOG_DIR": logDir, "REACTOR_CANARY_FILE": canaryPath},
 		StdoutPath: "logs/sink.out", StderrPath: "logs/sink.err",
 	})
@@ -348,8 +373,18 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 		return
 	}
 	defer sinkHandle.Kill()
-	waitForSink(sinkPort)
-	det.emit(e.bus, life(events.PhaseSinkUp, fmt.Sprintf("egress sink up on 127.0.0.1:%d — nothing egresses past here", sinkPort), nil))
+	// A dead sink is not a cosmetic problem: it is the containment boundary, and
+	// every session after it would run with nothing catching egress. Gate on it.
+	verified, err := waitForSink(ctx, ch, sinkPort)
+	if err != nil {
+		e.fail(det, "egress sink: "+err.Error()+sinkDiagnostics(ctx, ch, sinkHandle))
+		return
+	}
+	sinkMsg := fmt.Sprintf("egress sink up on 127.0.0.1:%d — nothing egresses past here", sinkPort)
+	if !verified {
+		sinkMsg = fmt.Sprintf("egress sink started on 127.0.0.1:%d (unverified — the chamber has no probe tool)", sinkPort)
+	}
+	det.emit(e.bus, life(events.PhaseSinkUp, sinkMsg, nil))
 
 	// Tail the chamber's collector logs and republish onto the bus.
 	tctx, tcancel := context.WithCancel(ctx)
@@ -360,7 +395,7 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 	sinkURL := fmt.Sprintf("http://127.0.0.1:%d", sinkPort)
 	for s := 1; s <= sessions; s++ {
 		det.emit(e.bus, sessionLife(events.PhaseSessionStart, fmt.Sprintf("session %d/%d", s, sessions), s))
-		if err := e.runSession(ctx, ch, det, art, b, s, installDir, artArgv, canaryPath, logDir, sinkURL, network); err != nil {
+		if err := e.runSession(ctx, ch, det, art, b, bin, s, installDir, artArgv, canaryPath, logDir, sinkURL, network); err != nil {
 			det.emit(e.bus, sessionLife(events.PhaseError, fmt.Sprintf("session %d: %s", s, err.Error()), s))
 		}
 		det.emit(e.bus, sessionLife(events.PhaseSessionEnd, fmt.Sprintf("session %d complete", s), s))
@@ -375,6 +410,44 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 	e.analyze(ctx, det, b)
 
 	det.Report.EndedMs = nowMs()
+}
+
+// chamberDirs are the directories a detonation writes into, relative to the
+// chamber HOME. logs/ holds collector JSONL, process stdout/stderr and strace
+// output; .reactor/ holds the canary and bait tables, the staged binaries and
+// the wire's state; artifact/ is where the artifact is installed.
+var chamberDirs = []string{
+	"logs",
+	"artifact",
+	".reactor",
+	".reactor/bin",
+	".reactor/state",
+}
+
+// prepareChamberDirs creates them inside the chamber, whichever driver it is.
+// The local driver's Provision already makes most of them because it owns a
+// host directory tree; a remote sandbox is provisioned with nothing but a home,
+// so the first `cmd > logs/sink.out` there is a shell error and a process that
+// never ran. Doing it here, through the interface, keeps both drivers honest
+// without either one having to know what the engine intends to write.
+func prepareChamberDirs(ctx context.Context, ch chamber.Chamber) error {
+	home := ch.Home()
+	quoted := make([]string, 0, len(chamberDirs))
+	for _, d := range chamberDirs {
+		quoted = append(quoted, shQuote(filepath.Join(home, d)))
+	}
+	res, err := ch.Exec(ctx, chamber.ExecOpts{
+		Cmd:     []string{"sh", "-c", "mkdir -p " + strings.Join(quoted, " ")},
+		Timeout: 60 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", strings.Join(chamberDirs, ", "), err)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("creating %s: exit %d: %s", strings.Join(chamberDirs, ", "),
+			res.ExitCode, strings.TrimSpace(res.Stderr+res.Stdout))
+	}
+	return nil
 }
 
 // tailLogs streams the chamber's collector JSONL files and republishes each
@@ -399,11 +472,13 @@ func (e *Engine) tailLogs(ctx context.Context, det *Detonation, ch chamber.Chamb
 }
 
 // runSession drives one victim session through wire→artifact.
-func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, b *bait.Set, session int, installDir string, artArgv []string, canaryPath, logDir, sinkURL string, network bool) error {
+func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, b *bait.Set, bin bins, session int, installDir string, artArgv []string, canaryPath, logDir, sinkURL string, network bool) error {
 	// victim -- wire --canaries --dir installDir -- <artifact argv>
+	// bin holds the CHAMBER-side paths staged for this detonation, never the
+	// host paths the binaries were built at.
 	victimArgv := []string{
-		e.bins.victim, "--session", strconv.Itoa(session), "--log-dir", logDir, "--task", e.cfg.Task, "--",
-		e.bins.wire, "--session", strconv.Itoa(session), "--log-dir", logDir, "--canaries", canaryPath, "--dir", installDir, "--",
+		bin.victim, "--session", strconv.Itoa(session), "--log-dir", logDir, "--task", e.cfg.Task, "--",
+		bin.wire, "--session", strconv.Itoa(session), "--log-dir", logDir, "--canaries", canaryPath, "--dir", installDir, "--",
 	}
 	victimArgv = append(victimArgv, artArgv...)
 
@@ -421,6 +496,16 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	}
 	if e.cfg.VictimBackend != "" {
 		env["REACTOR_VICTIM_BACKEND"] = e.cfg.VictimBackend
+	}
+	// The victim resolves its own backend from the environment, and a remote
+	// chamber has none: nothing of the host's is inherited there. Forward the
+	// backend's configuration explicitly so the victim reaches the same model
+	// wherever it runs. Without it a `fireworks` victim inside a sandbox
+	// resolved with no key and the package default model id, and every session
+	// died on "Model not found" — while the local driver, whose processes
+	// inherit the operator's env for free, looked perfectly healthy.
+	for k, v := range victimBackendEnv() {
+		env[k] = v
 	}
 	// Visitor BYOK: hand the Fireworks key to the victim binary only. It is
 	// stripped from every artifact process by internal/procenv; never written
@@ -444,7 +529,7 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	// running its install/entrypoint under the syscall collector, and its
 	// shipped text is scanned for analyzer-targeted injection.
 	if art.Kind != events.KindMCPServer {
-		return e.detonateNonMCP(ctx, ch, det, art, session, installDir, env)
+		return e.detonateNonMCP(ctx, ch, det, art, bin, session, installDir, env)
 	}
 
 	res, err := ch.Exec(ctx, chamber.ExecOpts{
@@ -460,12 +545,35 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	return nil
 }
 
+// victimBackendVars are the environment variables internal/victim reads to
+// decide which model the sacrificial agent talks to and how to authenticate.
+// They are host operator configuration, not artifact input, and they are
+// stripped again by internal/procenv before the artifact is ever spawned — the
+// victim is the only process in the chamber that sees them.
+var victimBackendVars = []string{
+	"FIREWORKS_API_KEY", "FIREWORKS_KEY", "FIREWORKS_BASE_URL", "FIREWORKS_MODEL",
+	"XAI_API_KEY", "XAI_OAUTH_TOKEN", "XAI_ACCESS_TOKEN", "XAI_BASE_URL",
+	"VICTIM_API_KEY", "VICTIM_MODEL", "VICTIM_BASE_URL",
+	"REACTOR_VICTIM_MODEL", "REACTOR_VICTIM_BASE", "SGLANG_BASE_URL",
+}
+
+// victimBackendEnv collects whichever of them the host has set.
+func victimBackendEnv() map[string]string {
+	out := map[string]string{}
+	for _, k := range victimBackendVars {
+		if v := os.Getenv(k); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // detonateNonMCP runs a skill/zip artifact's install and entrypoint under
 // strace, then parses the trace with reactor-collect into behavioral evidence
 // (install hooks, credential sweeps), and scans its shipped text for analyst
 // injection. Only session 1 does the work; later sessions are no-ops so the
 // rug-pull/repetition machinery does not apply to a one-shot payload.
-func (e *Engine) detonateNonMCP(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, session int, installDir string, env map[string]string) error {
+func (e *Engine) detonateNonMCP(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, bin bins, session int, installDir string, env map[string]string) error {
 	if session > 1 {
 		return nil
 	}
@@ -492,10 +600,10 @@ func (e *Engine) detonateNonMCP(ctx context.Context, ch chamber.Chamber, det *De
 	}
 
 	// Parse the trace into typed behavioral events (SPEC §4.3).
-	if e.bins.collect != "" {
+	if bin.collect != "" {
 		baitJSON := filepath.Join(ch.Home(), ".reactor", "bait.json")
 		_, _ = ch.Exec(ctx, chamber.ExecOpts{
-			Cmd: []string{e.bins.collect,
+			Cmd: []string{bin.collect,
 				"--strace", filepath.Join(ch.Home(), tracePath),
 				"--bait", baitJSON,
 				"--install-dir", installDir,
@@ -686,9 +794,16 @@ func (e *Engine) runScan(ctx context.Context, det *Detonation, art events.Artifa
 	// The static baseline launches the server to pull tools/list — on the host,
 	// which is exactly the thing the incumbent scanners do and Reactor exists to
 	// point at (SPEC §2). That is tolerable for a curated zoo entry an operator
-	// chose. It is not tolerable for something a stranger just uploaded, so an
-	// ingested artifact gets no host-side baseline; its column reads unavailable.
-	if art.Env["_ingest"] != "" {
+	// chose. It is not tolerable for anything else: /api/detonate is unauthenticated
+	// and CORS-open by design (it runs on the visitor's own machine), so any page
+	// the visitor happens to be browsing can POST an inline artifact. If that
+	// artifact's launch command reached the host it would be drive-by host RCE
+	// with no chamber anywhere in the picture.
+	//
+	// So the baseline runs only for an artifact that IS a catalog entry, exactly
+	// as curated — same command, same directory. Everything else (ingested or
+	// caller-supplied) gets no host-side baseline; its column reads unavailable.
+	if art.Env["_ingest"] != "" || !e.isCuratedZooEntry(art) {
 		return
 	}
 	res := scan.Run(ctx, scan.Options{
@@ -700,6 +815,18 @@ func (e *Engine) runScan(ctx context.Context, det *Detonation, art events.Artifa
 	det.mu.Lock()
 	det.scan = &res.ScanResult
 	det.mu.Unlock()
+}
+
+// isCuratedZooEntry reports whether this artifact is a catalog entry the
+// operator curated, unmodified in the two fields that decide what a host-side
+// static baseline would execute: the launch command and its directory. A
+// request that borrows a zoo id but substitutes either one is not a zoo entry.
+func (e *Engine) isCuratedZooEntry(art events.Artifact) bool {
+	z, ok := e.ArtifactByID(art.ID)
+	if !ok {
+		return false
+	}
+	return z.Source == art.Source && z.Env["_dir"] == art.Env["_dir"]
 }
 
 // ---- small helpers ----
@@ -736,17 +863,184 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-func waitForSink(port int) {
-	for i := 0; i < 50; i++ {
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
-		if err == nil {
-			c.Close()
-			return
+// ---- staging the chamber components ----
+
+// stageBins makes the host-built chamber components runnable inside the chamber
+// and returns the argv[0] paths to use for one detonation. The local driver
+// hands back the host path unchanged; a remote driver uploads each binary and
+// returns a sandbox path. The input `bins` is copied, never written through:
+// detonations run concurrently against the engine's single shared copy.
+func stageBins(ctx context.Context, ch chamber.Chamber, hostBins bins) (bins, error) {
+	staged := hostBins
+	for _, b := range []struct {
+		name string
+		path *string
+	}{
+		{"victim", &staged.victim},
+		{"wire", &staged.wire},
+		{"sink", &staged.sink},
+		{"collect", &staged.collect},
+	} {
+		if *b.path == "" {
+			continue // collect is optional; the others are checked at New
 		}
-		time.Sleep(40 * time.Millisecond)
+		in, err := ch.StageBinary(ctx, *b.path)
+		if err != nil {
+			return bins{}, fmt.Errorf("%s: %w", b.name, err)
+		}
+		if in == "" {
+			return bins{}, fmt.Errorf("%s: chamber returned no path", b.name)
+		}
+		*b.path = in
 	}
+	return staged, nil
 }
 
+// binSummary describes what staging is about to move, so a UI watching a
+// multi-megabyte upload does not look hung.
+func binSummary(b bins) string {
+	var total int64
+	n := 0
+	for _, p := range []string{b.victim, b.wire, b.sink, b.collect} {
+		if p == "" {
+			continue
+		}
+		n++
+		if st, err := os.Stat(p); err == nil {
+			total += st.Size()
+		}
+	}
+	return fmt.Sprintf("%d binaries, %.1f MB", n, float64(total)/(1<<20))
+}
+
+// ---- sink port selection + readiness, both answered inside the chamber ----
+
+const (
+	defaultSinkPort = 9931
+	// sinkProbeTries × the script's 250ms pause bounds how long a sink that
+	// never binds is waited on before the detonation fails.
+	sinkProbeTries = 40
+)
+
+// pickSinkPort chooses the sink's port by asking the CHAMBER what is free, not
+// the host. Host availability says nothing about a remote sandbox and would
+// silently shift the port for no reason; inside the chamber the question is
+// exactly right, and on the local driver it is the same question as before
+// because the chamber shares the host's network namespace.
+func pickSinkPort(ctx context.Context, ch chamber.Chamber, pref int) int {
+	for _, p := range sinkPortCandidates(pref) {
+		res, err := ch.Exec(ctx, chamber.ExecOpts{
+			Cmd: []string{"sh", "-c", portProbeScript(p, 1)}, Timeout: 30 * time.Second,
+		})
+		if err != nil || res.ExitCode == probeNoTool {
+			return freePort(pref) // can't ask; the host heuristic is all we have
+		}
+		if res.ExitCode != 0 {
+			return p // nothing answered there: free
+		}
+	}
+	return freePort(pref)
+}
+
+func sinkPortCandidates(pref int) []int {
+	out := []int{pref}
+	for i := 0; i < 6; i++ {
+		out = append(out, 20000+rand.Intn(30000))
+	}
+	return out
+}
+
+// waitForSink blocks until the sink is accepting connections INSIDE the
+// chamber. The sink listens on the chamber's loopback, so dialling the host's
+// loopback answers a different question entirely — remotely it can never
+// connect, which made a dead sink indistinguishable from a live one.
+//
+// Reports whether readiness was actually proven: a chamber with no probe tool
+// yields (false, nil) so the caller can say so rather than claim containment.
+func waitForSink(ctx context.Context, ch chamber.Chamber, port int) (bool, error) {
+	res, err := ch.Exec(ctx, chamber.ExecOpts{
+		Cmd: []string{"sh", "-c", portProbeScript(port, sinkProbeTries)}, Timeout: 90 * time.Second,
+	})
+	if err != nil {
+		return false, fmt.Errorf("probing 127.0.0.1:%d inside the chamber: %w", port, err)
+	}
+	switch res.ExitCode {
+	case 0:
+		return true, nil
+	case probeNoTool:
+		return false, nil
+	}
+	return false, fmt.Errorf("nothing is listening on 127.0.0.1:%d inside the chamber — the sink did not start", port)
+}
+
+// sinkDiagnostics reads the sink's own stdout/stderr out of the chamber and its
+// exit status off the handle. Without this the operator sees only that nothing
+// answered on the port and has to go into the sandbox by hand to find out why —
+// which is exactly what a missing logs/ directory cost the first time.
+func sinkDiagnostics(ctx context.Context, ch chamber.Chamber, h chamber.Handle) string {
+	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var parts []string
+	if h != nil {
+		// The sink is dead or it would have answered the probe, so a status is
+		// there to be read; a short budget keeps a hung one from blocking here.
+		wctx, wcancel := context.WithTimeout(dctx, 5*time.Second)
+		if code, err := h.Wait(wctx); err == nil {
+			parts = append(parts, fmt.Sprintf("sink exited %d", code))
+		}
+		wcancel()
+	}
+	for _, p := range []string{"logs/sink.err", "logs/sink.out"} {
+		data, err := ch.ReadFile(dctx, p)
+		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+			continue
+		}
+		parts = append(parts, p+": "+truncate(strings.TrimSpace(string(data)), 500))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
+}
+
+// probeNoTool is the probe script's "I have no way to answer" exit code, kept
+// distinct from a plain negative so callers never read it as evidence.
+const probeNoTool = 2
+
+// portProbeScript renders a POSIX-sh script that polls tcp 127.0.0.1:port from
+// wherever it runs, retrying up to `tries` times. Exit 0: something answered.
+// Exit 1: nothing did. Exit 2 (probeNoTool): no probe tool present.
+//
+// curl first because it is the one thing guaranteed in the sandbox image (nc is
+// not); python3 covers a host or image without it. Any curl exit other than 7
+// (couldn't connect) means the port answered — a timeout or an HTTP error is
+// still proof of a listener.
+func portProbeScript(port, tries int) string {
+	py := fmt.Sprintf(`import socket,sys
+s=socket.socket(); s.settimeout(2)
+sys.exit(0 if s.connect_ex(("127.0.0.1",%d))==0 else 1)`, port)
+	return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then
+  probe() { curl -s -o /dev/null -m 2 --noproxy '*' "http://127.0.0.1:%[1]d/"; [ $? -ne 7 ]; }
+elif command -v python3 >/dev/null 2>&1; then
+  probe() { python3 -c %[2]s >/dev/null 2>&1; }
+else
+  exit %[4]d
+fi
+i=0
+while [ $i -lt %[3]d ]; do
+  if probe; then exit 0; fi
+  i=$((i+1))
+  if [ $i -lt %[3]d ]; then sleep 0.25; fi
+done
+exit 1
+`, port, shQuote(py), tries, probeNoTool)
+}
+
+// shQuote makes a value safe inside single quotes for a chamber shell.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// freePort is the host-side fallback used only when the chamber cannot be asked
+// (no probe tool, or exec failed). On the local driver it is exactly right.
 func freePort(pref int) int {
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", pref))
 	if err == nil {

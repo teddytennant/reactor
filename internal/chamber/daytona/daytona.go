@@ -16,10 +16,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/reactor-sec/reactor/internal/chamber"
@@ -27,6 +27,11 @@ import (
 )
 
 const defaultBase = "https://app.daytona.io/api"
+
+// defaultToolboxProxy is the region proxy that fronts every sandbox's toolbox
+// daemon. The sandbox object normally carries it as toolboxProxyUrl; this is
+// the fallback for the rare response that omits it.
+const defaultToolboxProxy = "https://proxy.app.daytona.io/toolbox"
 
 // Driver provisions Daytona sandboxes.
 type Driver struct {
@@ -37,6 +42,22 @@ type Driver struct {
 	// env. BYOK drivers skip the REACTOR_DRIVER gate so a public UI can route
 	// into the visitor's account without flipping the host default.
 	byok bool
+
+	upOnce   sync.Once
+	upClient *http.Client
+}
+
+// uploadHTTP is the client used for binary uploads. It deliberately has no
+// Timeout: the engine's binaries run to ~10 MB and a modest uplink puts that
+// well past the 120 s that suits a control-plane call, so the request context is
+// the only clock. Transport-level limits still catch a dead peer.
+func (d *Driver) uploadHTTP() *http.Client {
+	d.upOnce.Do(func() {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.ResponseHeaderTimeout = 5 * time.Minute
+		d.upClient = &http.Client{Transport: tr}
+	})
+	return d.upClient
 }
 
 // New builds a Daytona driver from DAYTONA_API_KEY / DAYTONA_API_URL.
@@ -132,17 +153,25 @@ func (d *Driver) Provision(ctx context.Context, spec chamber.Spec) (chamber.Cham
 	if err := d.waitStarted(ctx, created.ID); err != nil {
 		return nil, err
 	}
-	// The toolbox (exec + fs) is reached through a proxy, not the control-plane
-	// API — its base URL is on the sandbox object. The proxy authenticates with
-	// a separate proxy API key (REACTOR_DAYTONA_PROXY_TOKEN); the control-plane
-	// key is rejected there. Validated live: create/state/destroy on the API;
-	// toolbox exec needs that proxy token wired (or the daytona SDK).
+	// The toolbox (exec + fs) is reached through the region proxy, not the
+	// control-plane API: the sandbox object carries the proxy base as
+	// toolboxProxyUrl and the sandbox id goes in the path, so a call looks like
+	//
+	//	POST {toolboxProxyUrl}/{sandboxId}/process/execute
+	//
+	// authenticated with the ordinary Daytona API key — the same credential as
+	// the control plane, which matters for BYOK where no key is in host env.
+	// Validated live end to end (create / exec / fs / destroy). The old
+	// control-plane route {base}/toolbox/{id}/toolbox/... no longer exists.
 	proxy := created.ToolboxProxyURL
 	if proxy == "" {
 		proxy = os.Getenv("REACTOR_DAYTONA_TOOLBOX_URL")
 	}
+	if proxy == "" {
+		proxy = defaultToolboxProxy
+	}
 	c := &Chamber{d: d, id: created.ID, home: home, proxyURL: proxy,
-		proxyToken: firstEnv("REACTOR_DAYTONA_PROXY_TOKEN", "DAYTONA_API_KEY")}
+		proxyToken: os.Getenv("REACTOR_DAYTONA_PROXY_TOKEN")}
 	// Best-effort: discover the sandbox user's real home.
 	if out, err := c.exec(ctx, "echo $HOME", "", nil, 10*time.Second); err == nil {
 		if h := strings.TrimSpace(out.Result); h != "" {
@@ -222,39 +251,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// ---- multipart upload helper used by the Chamber ----
-
-func (d *Driver) uploadFile(ctx context.Context, sandboxID, dstPath string, content []byte) error {
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	fw, err := w.CreateFormFile("file", dstPath)
-	if err != nil {
-		return err
-	}
-	if _, err := fw.Write(content); err != nil {
-		return err
-	}
-	w.Close()
-
-	url := fmt.Sprintf("%s/toolbox/%s/toolbox/files/upload?path=%s", d.base, sandboxID, dstPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+d.key)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("upload %s: %s: %s", dstPath, resp.Status, truncate(string(raw), 200))
-	}
-	return nil
 }
 
 var _ = events.KindWire // keep events imported for signature symmetry with local
