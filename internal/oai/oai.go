@@ -35,6 +35,28 @@ func New(baseURL, apiKey, model string) *Client {
 	}
 }
 
+// NewFireworks builds a client pointed at Fireworks' OpenAI-compatible API.
+// model may be empty — the project default is used.
+func NewFireworks(apiKey, model string) *Client {
+	if model == "" {
+		model = os.Getenv("ANALYST_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("VICTIM_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("FIREWORKS_MODEL")
+	}
+	if model == "" {
+		model = "accounts/fireworks/models/gpt-oss-120b"
+	}
+	base := os.Getenv("FIREWORKS_BASE_URL")
+	if base == "" {
+		base = "https://api.fireworks.ai/inference/v1"
+	}
+	return New(base, apiKey, model)
+}
+
 // FromEnv builds the analyst client from the environment (SPEC §12.3). The
 // analyst reuses whatever provider is configured, checked in order: xAI (the
 // pinned default), then Fireworks (an OpenAI-compatible open-model host), then

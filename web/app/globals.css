@@ -128,7 +128,7 @@
   /* A visible focus ring on everything interactive, at zero specificity so any
      component can override it with `.focus-ring` or its own utilities. */
   :where(a, button, summary, input, select, textarea, [role="button"], [tabindex]):focus-visible {
-    outline: 2px solid rgb(var(--accent) / 0.7);
+    outline: 2px solid rgb(var(--fg) / 0.65);
     outline-offset: 2px;
   }
   /* Thin, unobtrusive scrollbars. */
@@ -200,6 +200,16 @@
   .panel {
     @apply relative rounded-2xl border border-line bg-surface;
     box-shadow: var(--panel-shadow);
+  }
+  /* Form control used by onboarding / settings. Matches ArtifactIntake inputs. */
+  .field-input {
+    @apply w-full rounded-xl bg-surface-2 px-3 py-2 text-fg outline-none transition-colors duration-200;
+    @apply placeholder:text-faint hover:bg-surface-2/80;
+    @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2;
+    outline-color: transparent;
+  }
+  .field-input:focus-visible {
+    outline-color: rgb(var(--fg) / 0.65);
   }
   /* Same panel, no cast shadow — for grouping inside another panel's rhythm. */
   .panel-flat {
@@ -515,7 +525,7 @@
     @apply outline-none;
   }
   .focus-ring:focus-visible {
-    @apply ring-2 ring-accent/60 ring-offset-2 ring-offset-bg;
+    @apply ring-2 ring-fg/55 ring-offset-2 ring-offset-bg;
   }
   /* Retained name, neutralized: a barely-there warm lift behind the console. */
   .console-veil {

@@ -31,7 +31,7 @@ func (e *Engine) Handler() http.Handler {
 func cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Reactor-Daytona-Key, X-Reactor-Daytona-Url, X-Reactor-Fireworks-Key")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -42,7 +42,7 @@ func cors(h http.Handler) http.Handler {
 }
 
 func (e *Engine) handleHealth(w http.ResponseWriter, r *http.Request) {
-	v := e.victimInfo()
+	v := e.victimInfo(RunCredentials{})
 	writeJSON(w, map[string]any{
 		"ok":      true,
 		"drivers": e.Drivers(),
@@ -69,6 +69,8 @@ func (e *Engine) handleDetonate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Headers fill any field the JSON body left empty (same contract as upload).
+	req.Credentials = credentialsFromRequest(r, req.Credentials)
 	// Ingest failures carry their own status (413 oversize, 415 unsupported
 	// archive, 504 clone timeout); everything else stays the 400 it always was.
 	id, err := e.Detonate(req)

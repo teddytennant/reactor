@@ -3,6 +3,7 @@
 // fixture played back with realistic cadence. The UI never needs to know which.
 
 import { isReactorEvent, type ReactorEvent } from "./events";
+import { engineURL } from "./engine";
 
 export interface RunnerCallbacks {
   onEvent: (ev: ReactorEvent) => void;
@@ -31,9 +32,12 @@ const SSE_KINDS = [
  * Event; the SSE event name is Event.kind (CONTRACT.md), so we listen on every
  * known kind plus the unnamed `message` fallback. The `verdict` event ends the
  * run; heartbeats (`ping`) are ignored.
+ *
+ * URL goes through engineURL so a Vercel-hosted UI streams straight from the
+ * engine origin (NEXT_PUBLIC_ENGINE_URL) instead of through the edge rewrite.
  */
 export function startLive(detonationId: string, cb: RunnerCallbacks): DetonationRunner {
-  const url = `/api/events?detonation=${encodeURIComponent(detonationId)}`;
+  const url = engineURL(`/api/events?detonation=${encodeURIComponent(detonationId)}`);
   const es = new EventSource(url);
   let closed = false;
 

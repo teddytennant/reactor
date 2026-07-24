@@ -99,14 +99,14 @@ All JSON bodies use the types in `internal/events` unless noted.
 | `GET` | `/api/health` | | `{ "ok", "drivers":[{"name","available","why"}], "analyst", "victim":{"model","served","simulated","temp","seed","revision"}, "zoo": <int> }` |
 | `GET` | `/api/artifacts` | | `Artifact[]` (the zoo, for the picker) |
 | `POST` | `/api/upload` | `multipart/form-data`, one file part (any field name) + optional `kind`/`name`/`source`/`install` text fields | `UploadResponse` (see below) |
-| `POST` | `/api/detonate` | `{ "artifact_id": "...", "sessions": 5, "network": false }`, or a full `Artifact` under `"artifact"`, or `{ "upload_id": "up_..." }`, or `{ "repo": "https://...", "ref": "main" }` | `{ "detonation_id": "det_..." }` |
+| `POST` | `/api/detonate` | `{ "artifact_id": "...", "sessions": 5, "network": false }`, or a full `Artifact` under `"artifact"`, or `{ "upload_id": "up_..." }`, or `{ "repo": "https://...", "ref": "main" }`. Optional visitor BYOK: `"credentials": { "daytona_api_key", "daytona_api_url", "fireworks_api_key" }` (also accepted as `X-Reactor-Daytona-Key` / `X-Reactor-Daytona-Url` / `X-Reactor-Fireworks-Key` headers). Credentials are never written into reports or SSE. | `{ "detonation_id": "det_..." }` |
 | `GET` | `/api/detonations` | | `DetonationReport[]` (summaries, newest first) |
 | `GET` | `/api/detonations/{id}` | | full `DetonationReport` |
 | `GET` | `/api/events?detonation={id}` | SSE | `text/event-stream` of `Event`; replays history then live. Each SSE `data:` line is one `Event`. Event name = `Event.kind`. |
 | `GET` | `/api/scan?detonation={id}` | | `ScanResult` (static baseline / left column). Missing report returns `{ "status": "unavailable" }`. |
 | `GET` | `/api/scorecard` | | offline `eval/scorecard.json` if present, else a live scorecard derived from completed detonations |
 
-CORS: `*` origin, `GET/POST/OPTIONS`, `Content-Type` allowed.
+CORS: `*` origin, `GET/POST/OPTIONS`, `Content-Type` and the `X-Reactor-*` BYOK headers allowed.
 
 Errors are `text/plain` on every endpoint (`http.Error`), with a message meant to be shown to a person. Statuses: `400` malformed request or a refused archive/url, `404` unknown detonation or expired upload, `405` wrong method, `413` over a size ceiling, `415` unsupported archive type, `504` clone timeout, `500` engine-side failure.
 

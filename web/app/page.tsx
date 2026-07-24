@@ -19,8 +19,15 @@ import {
   REPLAYABLE_IDS,
   fixtureFor,
 } from "@/lib/fixtures";
+import {
+  EMPTY_CREDENTIALS,
+  isOnboardingDone,
+  loadCredentials,
+  type Credentials,
+} from "@/lib/credentials";
 import { cn } from "@/lib/cn";
 import { TopBar } from "@/components/TopBar";
+import { CredentialsModal } from "@/components/CredentialsModal";
 import { ArtifactPicker } from "@/components/console/ArtifactPicker";
 import { ArtifactIntake, isIngested, type IntakeTarget } from "@/components/console/ArtifactIntake";
 import { ScanColumn } from "@/components/console/ScanColumn";
@@ -54,6 +61,13 @@ export default function ConsolePage() {
   // left column has nothing to report and must say so rather than hang.
   const [runIngested, setRunIngested] = useState(false);
 
+  // BYOK: Daytona + Fireworks keys in localStorage. First visit opens onboarding.
+  const [credentials, setCredentials] = useState<Credentials>(EMPTY_CREDENTIALS);
+  const [credModal, setCredModal] = useState<{ open: boolean; mode: "onboarding" | "settings" }>({
+    open: false,
+    mode: "onboarding",
+  });
+
   const runnerRef = useRef<DetonationRunner | null>(null);
   const gotVerdictRef = useRef(false);
   const receivedRef = useRef(false);
@@ -63,8 +77,14 @@ export default function ConsolePage() {
   intakeRef.current = intake;
 
   // Probe the engine once; default to replay mode if unreachable (DEMO §7).
+  // Also hydrate BYOK credentials and open first-run onboarding when needed.
   useEffect(() => {
     let alive = true;
+    const creds = loadCredentials();
+    setCredentials(creds);
+    if (!isOnboardingDone()) {
+      setCredModal({ open: true, mode: "onboarding" });
+    }
     (async () => {
       const [health, arts] = await Promise.all([getHealth(), getArtifacts()]);
       if (!alive) return;
@@ -190,6 +210,20 @@ export default function ConsolePage() {
   // there claiming to be waiting for a scanner that was deliberately not run.
   const noBaseline = runIngested && state.scanLines.length === 0;
   const scanActive = (running || state.scanLines.length > 0) && !noBaseline;
+  // The scanner emitted nothing and never will, so the transcript says so in
+  // the one place a reader looks — under the prompt — rather than leaving the
+  // column blank and looking broken.
+  const scanLines = noBaseline
+    ? [
+        {
+          tool: "mcp-scan",
+          stream: "stdout",
+          text: "(not run — no static baseline is produced for an uploaded or cloned artifact)",
+          issues: 0,
+          done: false,
+        },
+      ]
+    : state.scanLines;
 
   /**
    * The core bloom (DESIGN §1 Texture / §2) — the state-reactive radial ambient
@@ -207,7 +241,16 @@ export default function ConsolePage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg lg:h-dvh lg:min-h-0 lg:overflow-hidden">
-      <TopBar />
+      <TopBar
+        credentials={credentials}
+        onOpenSettings={() => setCredModal({ open: true, mode: "settings" })}
+      />
+      <CredentialsModal
+        open={credModal.open}
+        mode={credModal.mode}
+        onClose={() => setCredModal((m) => ({ ...m, open: false }))}
+        onChange={setCredentials}
+      />
 
       {/* The only thing that ever reaches past this box is `.core-bloom::before`,
           whose ambient layer is inset `-5%` horizontally by design. `overflow-x-clip`
@@ -279,7 +322,7 @@ export default function ConsolePage() {
             )}
             <ScanColumn
               artifactName={artifactName}
-              scanLines={state.scanLines}
+              scanLines={scanLines}
               result={state.scanResult}
               active={scanActive}
             />

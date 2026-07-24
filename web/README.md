@@ -20,28 +20,44 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Production:
+Production / Vercel (`reactor.teddytennant.com`):
 
 ```bash
 npm run build
 npm start
+# or: deploy with Root Directory = web  (see ../DEPLOY.md)
 ```
+
+Set on Vercel:
+
+| Env | Value |
+|---|---|
+| `NEXT_PUBLIC_ENGINE_URL` | public Go engine origin (no trailing slash) |
+| `NEXT_PUBLIC_SITE_URL` | `https://reactor.teddytennant.com` |
 
 > First `build`/`dev` fetches Inter + JetBrains Mono via `next/font/google`, then
 > self-hosts them (no runtime font requests). One-time network access needed.
+
+## Onboarding (BYOK)
+
+On first visit the console asks for **Daytona** and **Fireworks** API keys.
+They stay in `localStorage` and are attached to `POST /api/detonate` as
+`credentials` (upload uses `X-Reactor-*` headers). Skip to run the bundled
+replay with no keys. Re-open anytime via the gear in the top bar.
 
 ## Live engine vs. replay
 
 The UI is **self-sufficient**. On load it probes the engine at `/api/health`:
 
 - **Live mode** (engine reachable): `Detonate` POSTs `/api/detonate` and opens
-  `EventSource('/api/events?detonation=<id>')`. `/api/*` is proxied to the Go
-  engine — set the target with `NEXT_PUBLIC_ENGINE_URL` (default
-  `http://127.0.0.1:8787`), see `next.config.mjs`.
+  `EventSource` on `/api/events?detonation=<id>`. Locally, `next.config.mjs`
+  rewrites `/api/*` to the Go engine (default `http://127.0.0.1:8787`). On
+  Vercel, set `NEXT_PUBLIC_ENGINE_URL` so the browser talks to the engine
+  directly (long SSE must not transit the edge rewrite).
 - **Replay mode** (engine unreachable — the default fallback, and the DEMO §7
   backup): the bundled fixtures play through the *same* render path with
   realistic cadence (detonations ~700 ms apart; the session-4 signals land with a
-  beat between them). A **Replay demo** button forces this in either mode.
+  beat between them).
 
 ```bash
 NEXT_PUBLIC_ENGINE_URL=http://127.0.0.1:8787 npm run dev

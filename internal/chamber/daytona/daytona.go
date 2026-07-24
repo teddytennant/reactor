@@ -33,6 +33,10 @@ type Driver struct {
 	base   string
 	key    string
 	client *http.Client
+	// byok is true when the key came from a visitor request rather than host
+	// env. BYOK drivers skip the REACTOR_DRIVER gate so a public UI can route
+	// into the visitor's account without flipping the host default.
+	byok bool
 }
 
 // New builds a Daytona driver from DAYTONA_API_KEY / DAYTONA_API_URL.
@@ -45,16 +49,43 @@ func New() *Driver {
 		base:   strings.TrimRight(base, "/"),
 		key:    firstEnv("DAYTONA_API_KEY", "DAYTONA_KEY"),
 		client: &http.Client{Timeout: 120 * time.Second},
+		byok:   false,
+	}
+}
+
+// NewWithKey builds a driver from an explicit API key (visitor BYOK). A key
+// supplied this way is always Available — the REACTOR_DRIVER gate only applies
+// to host-env credentials so a local demo does not accidentally bill Daytona.
+func NewWithKey(apiKey, apiURL string) *Driver {
+	base := strings.TrimSpace(apiURL)
+	if base == "" {
+		base = os.Getenv("DAYTONA_API_URL")
+	}
+	if base == "" {
+		base = defaultBase
+	}
+	return &Driver{
+		base:   strings.TrimRight(base, "/"),
+		key:    strings.TrimSpace(apiKey),
+		client: &http.Client{Timeout: 120 * time.Second},
+		byok:   true,
 	}
 }
 
 // Name implements chamber.Driver.
 func (*Driver) Name() string { return "daytona" }
 
-// Available reports whether a Daytona sandbox can be provisioned. Gated behind
-// REACTOR_DRIVER=daytona so the local driver stays the default.
+// Available reports whether a Daytona sandbox can be provisioned. Host-env
+// drivers are gated behind REACTOR_DRIVER=daytona so the local driver stays
+// the default; BYOK drivers (NewWithKey) are available whenever a key is set.
 func (d *Driver) Available() bool {
-	return d.key != "" && strings.EqualFold(os.Getenv("REACTOR_DRIVER"), "daytona")
+	if d.key == "" {
+		return false
+	}
+	if d.byok {
+		return true
+	}
+	return strings.EqualFold(os.Getenv("REACTOR_DRIVER"), "daytona")
 }
 
 // Why implements chamber.Driver.
@@ -62,6 +93,8 @@ func (d *Driver) Why() string {
 	switch {
 	case d.key == "":
 		return "set DAYTONA_API_KEY to run detonations inside a disposable Daytona sandbox"
+	case d.byok:
+		return "visitor BYOK — one disposable sandbox per detonation on their Daytona account"
 	case !strings.EqualFold(os.Getenv("REACTOR_DRIVER"), "daytona"):
 		return "configured; set REACTOR_DRIVER=daytona to route detonations into a live sandbox"
 	default:

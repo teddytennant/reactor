@@ -111,7 +111,11 @@ cd web && npm install && npm run dev
 # http://localhost:3000
 # proxies /api/* to NEXT_PUBLIC_ENGINE_URL (default http://127.0.0.1:8787)
 # if the engine is down, the UI falls back to fixture replay
+# first visit: onboarding asks for Daytona + Fireworks keys (localStorage BYOK)
 ```
+
+Host the UI on Vercel at **reactor.teddytennant.com** — see [`DEPLOY.md`](DEPLOY.md).
+The Go engine is **not** on Vercel; point `NEXT_PUBLIC_ENGINE_URL` at it.
 
 List the zoo:
 

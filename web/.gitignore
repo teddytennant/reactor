@@ -1,0 +1,28 @@
+# Include the Next app; ignore host-local noise. Vercel Root Directory = web.
+
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+
+# production
+build
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env (keep .env.example)
+.env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

@@ -1,8 +1,12 @@
-// Thin client for the engine HTTP API (docs/CONTRACT.md). All calls go to
-// same-origin /api/* which next.config.mjs proxies to the Go engine on :8787.
-// Every call is defensive: the engine may not be running, in which case the UI
-// falls back to bundled fixtures (replay mode). Nothing here throws to the
-// render tree — callers get null/false and decide.
+// Thin client for the engine HTTP API (docs/CONTRACT.md).
+//
+// Locally, paths are same-origin `/api/*` and next.config.mjs rewrites them to
+// the Go engine. On Vercel, NEXT_PUBLIC_ENGINE_URL points the browser at the
+// engine origin directly (lib/engine.ts) so SSE is not proxied through the edge.
+//
+// BYOK credentials (Daytona + Fireworks) ride on detonate as a JSON field and
+// on upload as X-Reactor-* headers. They never touch the Vercel host beyond the
+// static JS bundle.
 
 import type {
   Artifact,
@@ -10,6 +14,8 @@ import type {
   Health,
   ScanResult,
 } from "./events";
+import { credentialsHeaders, credentialsPayload, loadCredentials } from "./credentials";
+import { engineURL } from "./engine";
 
 const TIMEOUT_MS = 2500;
 
@@ -25,7 +31,7 @@ async function getJSON<T>(path: string, timeout = TIMEOUT_MS): Promise<T | null>
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
-    const res = await fetch(path, {
+    const res = await fetch(engineURL(path), {
       signal: ctrl.signal,
       headers: { accept: "application/json" },
       cache: "no-store",
@@ -133,9 +139,12 @@ export function uploadArtifact(
     form.append("file", file, file.name);
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/upload");
+    xhr.open("POST", engineURL("/api/upload"));
     xhr.responseType = "text";
     xhr.setRequestHeader("accept", "application/json, text/plain");
+    for (const [k, v] of Object.entries(credentialsHeaders(loadCredentials()))) {
+      xhr.setRequestHeader(k, v);
+    }
 
     if (opts.onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -199,16 +208,29 @@ export interface DetonateOutcome {
  * this exists: a bad archive entry, an ssh remote or an expired upload is a
  * thing the person can fix, so the engine's sentence has to reach them rather
  * than being swallowed into a silent fixture replay.
+ *
+ * Visitor BYOK credentials (localStorage) are attached under `credentials` so
+ * the engine can provision a Daytona sandbox and call Fireworks under their
+ * account without the host operator holding those keys.
  */
 export async function detonateWithError(body: DetonateBody): Promise<DetonateOutcome> {
   const ingest = Boolean(body.repo || body.upload_id);
+  const creds = credentialsPayload(loadCredentials());
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), ingest ? INGEST_TIMEOUT_MS : TIMEOUT_MS);
-    const res = await fetch("/api/detonate", {
+    const res = await fetch(engineURL("/api/detonate"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessions: 5, network: false, ...body }),
+      headers: {
+        "content-type": "application/json",
+        ...credentialsHeaders(loadCredentials()),
+      },
+      body: JSON.stringify({
+        sessions: 5,
+        network: false,
+        ...body,
+        ...(creds ? { credentials: creds } : {}),
+      }),
       signal: ctrl.signal,
     });
     clearTimeout(t);

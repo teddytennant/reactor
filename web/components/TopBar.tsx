@@ -2,16 +2,25 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { Credentials } from "@/lib/credentials";
 import { Wordmark } from "./ReactorMark";
 import { ThemeToggle } from "./ThemeToggle";
+import { CredentialsBadge } from "./CredentialsModal";
 
 const NAV = [
   { href: "/", label: "Console" },
   { href: "/scorecard", label: "Scorecard" },
 ];
 
-export function TopBar() {
+export function TopBar({
+  credentials,
+  onOpenSettings,
+}: {
+  credentials?: Credentials;
+  onOpenSettings?: () => void;
+} = {}) {
   const pathname = usePathname();
   return (
     <header className="chrome-edge sticky top-0 z-30 border-b border-line bg-bg/85 backdrop-blur-md">
@@ -25,8 +34,6 @@ export function TopBar() {
           </span>
         </div>
 
-        {/* Calm app chrome: sentence-case sans nav in a soft segmented control,
-            like the reference's sidebar. No uppercase mono, no glow. */}
         <div className="flex items-center gap-2">
           <nav className="flex items-center gap-0.5 rounded-xl bg-surface-2/70 p-1">
             {NAV.map((item) => {
@@ -48,6 +55,20 @@ export function TopBar() {
               );
             })}
           </nav>
+          {credentials && onOpenSettings && (
+            <CredentialsBadge credentials={credentials} onClick={onOpenSettings} />
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="API keys and settings"
+              title="API keys"
+              className="focus-ring grid h-9 w-9 place-items-center rounded-xl text-muted transition-colors duration-200 hover:bg-surface-2 hover:text-fg"
+            >
+              <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </div>

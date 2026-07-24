@@ -93,6 +93,8 @@ type Detonation struct {
 	Report  *events.DetonationReport
 	idgen   *events.IDGen
 	startMs int64
+	// creds are visitor BYOK keys for this run only. Never copied into Report.
+	creds RunCredentials
 
 	mu     sync.Mutex
 	events []events.Event
@@ -383,11 +385,8 @@ type zooEntry struct {
 
 // ---- helpers ----
 
-func (e *Engine) newAnalyst(steps analyst.StepSink) analyst.Analyst {
-	if analystForced() {
-		return analyst.Deterministic{Steps: steps}
-	}
-	if client, ok := oai.FromEnv(); ok {
+func (e *Engine) newAnalyst(steps analyst.StepSink, creds RunCredentials) analyst.Analyst {
+	if client, ok := analystClient(creds); ok {
 		return analyst.Grok{Client: client, Model: client.Model, Steps: steps}
 	}
 	return analyst.Deterministic{Steps: steps}
@@ -453,8 +452,16 @@ func newID() string { return strings.ReplaceAll(uuid.NewString(), "-", "")[:12] 
 
 // victimInfo reports the intended victim backend for the report header. It does
 // not read attacker text — it just names the model that will eat the poison.
-func (e *Engine) victimInfo() events.VictimInfo {
-	b := victim.Resolve(context.Background(), victim.Config{Backend: e.cfg.VictimBackend, Temp: 0, Seed: 7})
+// A visitor Fireworks key selects the fireworks backend for the label.
+func (e *Engine) victimInfo(creds RunCredentials) events.VictimInfo {
+	cfg := victim.Config{Backend: e.cfg.VictimBackend, Temp: 0, Seed: 7}
+	if creds.FireworksAPIKey != "" {
+		if cfg.Backend == "" || cfg.Backend == "auto" {
+			cfg.Backend = "fireworks"
+		}
+		cfg.APIKey = creds.FireworksAPIKey
+	}
+	b := victim.Resolve(context.Background(), cfg)
 	return b.Info()
 }
 

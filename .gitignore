@@ -1,0 +1,21 @@
+# Build outputs
+/bin/
+crates/target/
+web/.next/
+web/tsconfig.tsbuildinfo
+
+# Secrets. Provider keys live in .env and never reach a chamber process
+# (internal/procenv strips them before anything untrusted is spawned).
+.env
+.env.local
+
+# Local chamber scratch and engine bookkeeping
+.engine.pid
+.engine.log
+/chamber/out/
+
+# eval/scorecard.json and eval/scorecard.md are deliberately tracked: the web
+# console falls back to them when the engine is unreachable.
+
+# Next static export (Vercel publishes this dir; never commit it)
+web/out/

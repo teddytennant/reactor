@@ -24,14 +24,18 @@ import (
 // artifact (with a source) or artifact_id names what to detonate; when an
 // upload or a repo is named, `artifact` may still ride along to refine the
 // staged artifact's name, kind, source or install step.
+//
+// Credentials are optional visitor BYOK keys (Daytona + Fireworks). They are
+// never written into the report or SSE stream.
 type DetonateRequest struct {
-	ArtifactID string           `json:"artifact_id"`
-	Artifact   *events.Artifact `json:"artifact"`
-	UploadID   string           `json:"upload_id"` // from POST /api/upload
-	Repo       string           `json:"repo"`      // https git url to clone
-	Ref        string           `json:"ref"`       // branch, tag or commit for repo
-	Sessions   int              `json:"sessions"`
-	Network    bool             `json:"network"`
+	ArtifactID  string           `json:"artifact_id"`
+	Artifact    *events.Artifact `json:"artifact"`
+	UploadID    string           `json:"upload_id"` // from POST /api/upload
+	Repo        string           `json:"repo"`      // https git url to clone
+	Ref         string           `json:"ref"`       // branch, tag or commit for repo
+	Sessions    int              `json:"sessions"`
+	Network     bool             `json:"network"`
+	Credentials RunCredentials   `json:"credentials"`
 }
 
 // Detonate starts a detonation and returns its id immediately; the run proceeds
@@ -57,10 +61,12 @@ func (e *Engine) Detonate(req DetonateRequest) (string, error) {
 	// host path and has no business in it.
 	reportArt := art
 	reportArt.Env = publicEnv(art.Env)
+	creds := req.Credentials.normalize()
 	det := &Detonation{
 		idgen:   events.NewIDGen(),
 		startMs: nowMs(),
 		done:    make(chan struct{}),
+		creds:   creds,
 		Report: &events.DetonationReport{
 			DetonationID: id, ArtifactID: art.ID, Artifact: &reportArt,
 			Sessions: sessions, Network: req.Network, StartedMs: nowMs(),
@@ -257,7 +263,7 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
-	driver := e.primaryDriver()
+	driver := e.driverFor(det.creds)
 	det.emit(e.bus, life(events.PhaseQueued, "queued "+art.Name, nil))
 	det.emit(e.bus, life(events.PhaseProvisioning, "provisioning "+driver.Name()+" chamber", nil))
 
@@ -285,8 +291,9 @@ func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network
 	})
 
 	// Victim + chamber info for the header strip. Backend is resolved lazily by
-	// the victim binary; we report the intended backend from config/env here.
-	vinfo := e.victimInfo()
+	// the victim binary; we report the intended backend from config/env here,
+	// preferring a visitor Fireworks key when present.
+	vinfo := e.victimInfo(det.creds)
 	det.Report.Victim = vinfo
 	info := ch.Info()
 	info.Model, info.Served, info.Simulated = vinfo.Model, vinfo.Served, vinfo.Simulated
@@ -414,6 +421,15 @@ func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detona
 	}
 	if e.cfg.VictimBackend != "" {
 		env["REACTOR_VICTIM_BACKEND"] = e.cfg.VictimBackend
+	}
+	// Visitor BYOK: hand the Fireworks key to the victim binary only. It is
+	// stripped from every artifact process by internal/procenv; never written
+	// into reports or the SSE stream.
+	if det.creds.FireworksAPIKey != "" {
+		env["FIREWORKS_API_KEY"] = det.creds.FireworksAPIKey
+		if env["REACTOR_VICTIM_BACKEND"] == "" {
+			env["REACTOR_VICTIM_BACKEND"] = "fireworks"
+		}
 	}
 	// Egress containment applies to the ARTIFACT only, never the victim. The
 	// victim is host-trusted infrastructure that may need to reach a hosted
@@ -555,7 +571,7 @@ func (e *Engine) analyze(ctx context.Context, det *Detonation, b *bait.Set) {
 	steps := func(st events.AnalystStep) {
 		det.emit(e.bus, events.Event{Kind: events.KindAnalyst, Analyst: &st})
 	}
-	an := e.newAnalyst(steps)
+	an := e.newAnalyst(steps, det.creds)
 	in2 := analyst.Input{
 		ArtifactID: det.Report.ArtifactID, Signals: signals, Evidence: redacted,
 		Sessions: det.Report.Sessions, StartedMs: det.Report.StartedMs, EndedMs: nowMs(),

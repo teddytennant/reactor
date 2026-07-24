@@ -15,9 +15,41 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  // Absolute base for OG/twitter image URLs (overridden in deploy by host).
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://reactor.teddytennant.com",
+  ),
   title: "Reactor — detonation console",
   description:
     "A detonation chamber for untrusted agent artifacts. Static scanners read the label; Reactor watches it behave.",
+  applicationName: "Reactor",
+  icons: {
+    // app/favicon.ico + app/icon.png + app/apple-icon.png are file-convention
+    // routes. public/icon-32.png is an extra static size for older clients.
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+      { url: "/icon-32.png", type: "image/png", sizes: "32x32" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  openGraph: {
+    title: "Reactor — detonation console",
+    description:
+      "Static scanners read the label. Reactor watches it behave.",
+    url: "https://reactor.teddytennant.com",
+    siteName: "Reactor",
+    type: "website",
+    images: [{ url: "/og.png", width: 2816, height: 1584, alt: "Reactor" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Reactor — detonation console",
+    description:
+      "Static scanners read the label. Reactor watches it behave.",
+    images: ["/og.png"],
+  },
+  alternates: { canonical: "/" },
 };
 
 export const viewport: Viewport = {

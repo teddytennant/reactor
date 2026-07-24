@@ -42,8 +42,8 @@ type Config struct {
 }
 
 // Resolve picks a backend from config + environment. Precedence when Backend is
-// "auto" or empty: an explicit hosted key (XAI/VICTIM) → xai; a reachable
-// in-chamber SGLang → sglang; otherwise the deterministic sim.
+// "auto" or empty: explicit cfg.APIKey with backend fireworks (BYOK) → xAI env
+// key → Fireworks env key → reachable in-chamber SGLang → deterministic sim.
 func Resolve(ctx context.Context, cfg Config) Backend {
 	backend := cfg.Backend
 	if backend == "" {
@@ -55,15 +55,20 @@ func Resolve(ctx context.Context, cfg Config) Backend {
 
 	xaiKey := firstEnv("XAI_API_KEY", "XAI_OAUTH_TOKEN", "XAI_ACCESS_TOKEN", "VICTIM_API_KEY")
 	fwKey := firstEnv("FIREWORKS_API_KEY", "FIREWORKS_KEY")
-	if cfg.APIKey != "" {
-		xaiKey = cfg.APIKey
-	}
 
 	switch backend {
 	case "xai", "hosted":
-		return newOAI(cfg, xaiKey, "xai")
+		key := xaiKey
+		if cfg.APIKey != "" {
+			key = cfg.APIKey
+		}
+		return newOAI(cfg, key, "xai")
 	case "fireworks":
-		return newOAI(cfg, fwKey, "fireworks")
+		key := fwKey
+		if cfg.APIKey != "" {
+			key = cfg.APIKey
+		}
+		return newOAI(cfg, key, "fireworks")
 	case "sglang":
 		return newOAI(cfg, "", "sglang")
 	case "sim":
@@ -74,6 +79,10 @@ func Resolve(ctx context.Context, cfg Config) Backend {
 		}
 		if fwKey != "" {
 			return newOAI(cfg, fwKey, "fireworks")
+		}
+		// BYOK path: config carries a key but no env was set — treat as Fireworks.
+		if cfg.APIKey != "" {
+			return newOAI(cfg, cfg.APIKey, "fireworks")
 		}
 		if base := firstEnv("REACTOR_VICTIM_BASE", "SGLANG_BASE_URL"); base != "" {
 			b := newOAI(cfg, "", "sglang")
