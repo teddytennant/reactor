@@ -55,6 +55,16 @@ export function engineOrigin(): string {
   return defaultEngineOrigin();
 }
 
+/** Has the visitor pinned an engine origin themselves (including to ""?). */
+export function hasStoredOrigin(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(ENGINE_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function setEngineOrigin(raw: string): void {
   if (typeof window === "undefined") return;
   try {
@@ -79,6 +89,35 @@ export function engineURL(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   const origin = engineOrigin();
   return origin ? `${origin}${p}` : p;
+}
+
+/**
+ * Same as `engineURL`, but for the SSE stream, which must never go through
+ * `next dev`'s `/api/*` rewrite.
+ *
+ * That rewrite proxies the response *and content-encodes it*, and compression
+ * buffers — so with the browser's `Accept-Encoding: gzip` the headers arrive,
+ * `EventSource` opens with a 200, and then no event body is ever flushed. The
+ * console sat on an empty chamber for the whole run with nothing to report,
+ * because as far as it could tell the stream was healthy. (`curl`, which sends
+ * no `Accept-Encoding`, streams the same URL fine, which is what made this look
+ * like a UI bug for so long.)
+ *
+ * The engine serves `Access-Control-Allow-Origin: *`, so going straight at it
+ * cross-origin works and takes the proxy out of the streaming path entirely.
+ * Only the *implicit* dev default is redirected: an origin the visitor pinned
+ * themselves — including a deliberate "" for console-and-engine-behind-one-
+ * reverse-proxy — is still honoured, since a real reverse proxy is expected to
+ * pass SSE through correctly.
+ */
+export function streamURL(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const origin = engineOrigin();
+  if (origin) return `${origin}${p}`;
+  if (hasStoredOrigin()) return p;
+  // `next dev` with no override. This is exactly what next.config.mjs points
+  // its rewrite at, so it is the same engine either way — just unproxied.
+  return `${DEFAULT_LOCAL_ENGINE}${p}`;
 }
 
 /** True when the UI is wired to a remote engine (not same-origin). */

@@ -1,9 +1,9 @@
 "use client";
 
-import { Check, ShieldCheck, Terminal } from "lucide-react";
+import { Check, EyeOff, ShieldCheck, Terminal } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ScanLine, ScanResult } from "@/lib/events";
-import { Led } from "@/components/ui";
+import { Led, SectionLabel } from "@/components/ui";
 
 /**
  * The mcp-scan column (DESIGN §3). Deliberately the quieter half: flat panel,
@@ -12,7 +12,38 @@ import { Led } from "@/components/ui";
  * the code — because that contrast is the entire reason this column sits next
  * to Reactor. Its only in-flight affordance is the quiet lamp in the footer
  * (DESIGN §2.5); there is no edge sweep, no glow and no ornament.
+ *
+ * The column has one hard job at the climax: hold a confident CLEAN while the
+ * chamber next to it says BLOCKED. So the result is a real stamp rather than a
+ * footnote — green ink at heading scale, one step below the verdict's, which is
+ * the correct rank. It is *wrong*, not *timid*, and the demo only works if it
+ * looks like a scanner that means it.
+ *
+ * The space under six lines of scanner output is filled by the argument rather
+ * than left hollow: the four things reading a description once structurally
+ * cannot show. Every entry names a real oracle the chamber fires (SPEC §4.4,
+ * `static_blind`), so the left column states its own limits and the right
+ * column then demonstrates them.
  */
+const BLIND_SPOTS: { title: string; why: string }[] = [
+  {
+    title: "Whether the description changes later",
+    why: "A scan reads one snapshot. A rug pull only exists across repetition.",
+  },
+  {
+    title: "What the agent does with its own context",
+    why: "Secrets in the model's prompt are not files, so nothing on disk to scan.",
+  },
+  {
+    title: "Behavior behind an input nobody sent",
+    why: "A conditional trigger stays dormant until its magic argument arrives.",
+  },
+  {
+    title: "What the package does at install time",
+    why: "Install hooks run before the first tool description is ever read.",
+  },
+];
+
 export function ScanColumn({
   artifactName,
   scanLines,
@@ -87,18 +118,25 @@ export function ScanColumn({
             );
           })}
         </div>
+
+        {result && <BlindSpots />}
       </div>
 
       {/* verdict footer — the payoff the right column is about to demolish */}
       <div className="shrink-0 border-t border-line px-5 py-4">
         {result ? (
-          // No box. CLEAN is a genuine status stamp so it earns uppercase, but
-          // it reads as green *ink* at label scale — a quiet, confident verdict
-          // — with spacing and the icon doing the separating (DESIGN §2.4).
-          <div className="flex animate-fade-slide-up items-center gap-3">
-            <ShieldCheck size={20} className="shrink-0 text-success" aria-hidden="true" />
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-              <span className="text-sm font-semibold uppercase tracking-label-wide text-success">
+          // No box, no wash. CLEAN is a genuine status stamp, so it earns both
+          // uppercase and scale — it has to hold its own across the gutter from
+          // BLOCKED, one rank below it, or the side-by-side has no tension.
+          <div className="flex animate-fade-slide-up items-center gap-3.5">
+            <span
+              aria-hidden="true"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success/15 text-success"
+            >
+              <ShieldCheck size={22} strokeWidth={2} />
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-2xl font-semibold leading-none tracking-tight text-success">
                 CLEAN
               </span>
               <span className="text-sm text-muted">
@@ -115,6 +153,43 @@ export function ScanColumn({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * What the scan above did not — and could not — check. Kept in the quiet half's
+ * own register: muted ink, no red, no chips, no alarm. It is not an accusation
+ * that mcp-scan is bad, it is the structural boundary of reading a label, and
+ * the right column spends the next ninety seconds crossing it.
+ */
+function BlindSpots() {
+  return (
+    <div className="animate-fade-in mt-6">
+      <SectionLabel
+        right={
+          <span className="telemetry tnum whitespace-nowrap">{BLIND_SPOTS.length} not checked</span>
+        }
+      >
+        Outside a static scan
+      </SectionLabel>
+
+      <ul className="mt-2.5 flex flex-col">
+        {BLIND_SPOTS.map((b) => (
+          <li key={b.title} className="hairline flex items-start gap-2.5 py-2.5 first:border-t-0">
+            <EyeOff size={13} className="mt-1 shrink-0 text-faint" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium leading-snug text-muted">{b.title}</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-faint">{b.why}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-3 text-sm leading-relaxed text-faint">
+        Not a flaw in the scanner. Reading a description once cannot show any of these — which is
+        what the chamber on the right is for.
+      </p>
+    </div>
   );
 }
 

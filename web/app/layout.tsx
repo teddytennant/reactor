@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { ThemeSync } from "@/components/ThemeSync";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -53,16 +54,24 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    // Must track --bg in globals.css: dark #1D1B18 / light #F8F5F1.
-    { media: "(prefers-color-scheme: dark)", color: "#1d1b18" },
-    { media: "(prefers-color-scheme: light)", color: "#f8f5f1" },
-  ],
+  // Must track --bg in globals.css (dark #1D1B18). Not a media-query pair:
+  // the theme now defaults to dark rather than following the OS, and a
+  // media-query themeColor cannot read the stored choice, so a light-mode OS
+  // was colouring the browser chrome for a page that renders dark.
+  themeColor: "#1d1b18",
 };
 
-// Set the theme class before first paint: manual choice wins, else follow the
-// OS preference, defaulting to dark (security-console feel) when unspecified.
-const THEME_INIT = `(function(){try{var t=localStorage.getItem('reactor-theme');var d;if(t==='dark')d=true;else if(t==='light')d=false;else d=!window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){document.documentElement.classList.add('dark');}})();`;
+// Set the theme class before first paint. A manual choice always wins; with no
+// choice on record the console opens dark regardless of the OS preference.
+// This is a containment instrument and the design is dark-native (DESIGN §1) —
+// a judge on a light-mode laptop was getting the pale theme for the demo, where
+// the whole point is a dark console with two coloured stamps on it. The light
+// theme stays first-class, it is just no longer what a first visit lands on.
+//
+// "system" is the third choice offered in Settings → Appearance; it is the only
+// one this script cannot decide once and forget, so ThemeSync keeps watching
+// the media query after hydration. Must agree with resolveTheme() in lib/prefs.
+const THEME_INIT = `(function(){try{var t=localStorage.getItem('reactor-theme');var d=t==='light'?false:t==='system'?!!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches):true;document.documentElement.classList.toggle('dark',d);}catch(e){document.documentElement.classList.add('dark');}})();`;
 
 export default function RootLayout({
   children,
@@ -72,7 +81,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+      <body className="min-h-screen font-sans antialiased">
+        <ThemeSync />
+        {children}
+      </body>
     </html>
   );
 }

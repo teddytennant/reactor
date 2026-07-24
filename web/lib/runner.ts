@@ -3,7 +3,7 @@
 // fixture played back with realistic cadence. The UI never needs to know which.
 
 import { isReactorEvent, type ReactorEvent } from "./events";
-import { engineURL } from "./engine";
+import { streamURL } from "./engine";
 
 export interface RunnerCallbacks {
   onEvent: (ev: ReactorEvent) => void;
@@ -33,11 +33,12 @@ const SSE_KINDS = [
  * known kind plus the unnamed `message` fallback. The `verdict` event ends the
  * run; heartbeats (`ping`) are ignored.
  *
- * URL goes through engineURL so a Vercel-hosted UI streams straight from the
- * engine origin (NEXT_PUBLIC_ENGINE_URL) instead of through the edge rewrite.
+ * URL goes through streamURL, not engineURL: a Vercel-hosted UI streams straight
+ * from the engine origin (NEXT_PUBLIC_ENGINE_URL), and under `next dev` it also
+ * skips the same-origin `/api/*` rewrite, whose gzip buffers SSE dead.
  */
 export function startLive(detonationId: string, cb: RunnerCallbacks): DetonationRunner {
-  const url = engineURL(`/api/events?detonation=${encodeURIComponent(detonationId)}`);
+  const url = streamURL(`/api/events?detonation=${encodeURIComponent(detonationId)}`);
   const es = new EventSource(url);
   let closed = false;
 

@@ -3,6 +3,7 @@
 import { Boxes, Check, FileArchive, Puzzle, Server, Star } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Artifact } from "@/lib/events";
+import { isLeadArtifact } from "@/lib/fixtures";
 import { Chip } from "@/components/ui";
 
 const KIND_META: Record<string, { label: string; Icon: typeof Server }> = {
@@ -51,7 +52,10 @@ export function ArtifactPicker({
     <div className="relative">
       <div className="flex max-h-[clamp(9rem,28vh,18rem)] flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-xl bg-surface-2/50 p-1.5">
         {artifacts.map((a) => {
-          const featured = a.id === "art_notes" || a.name.includes("notes-mcp");
+          // Exact identity only. `@acme/clean-notes-mcp` is the poisoned
+          // server's honest twin, and a substring test on the name badged the
+          // wrong one as the lead.
+          const featured = isLeadArtifact(a);
           const { label, Icon } = kindMeta(a.kind);
           const offline = showOfflineTag && !isReplayable(a);
           const selectable = !disabled && (isReplayable(a) || !showOfflineTag);

@@ -200,6 +200,78 @@ func TestUploadStagingIsCleanedUp(t *testing.T) {
 	}
 }
 
+// StagePath is the in-process twin of POST /api/upload: same digest, same
+// entrypoint inference, same staged id a Detonate can claim.
+func TestStagePathHappyPath(t *testing.T) {
+	e := newTestEngine(t)
+	archive := zipBytes(t, []entry{
+		{name: "notes-mcp/server.mjs", body: "console.log('hi')"},
+		{name: "notes-mcp/package.json", body: `{"name":"notes-mcp"}`},
+	})
+	path := filepath.Join(t.TempDir(), "notes-mcp.zip")
+	if err := os.WriteFile(path, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := e.StagePath(path, StageOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(res.UploadID, "up_") {
+		t.Errorf("upload_id = %q", res.UploadID)
+	}
+	if res.SHA256 != sha256Hex(archive) {
+		t.Errorf("sha256 = %q, want %q", res.SHA256, sha256Hex(archive))
+	}
+	if res.Kind != events.KindMCPServer || res.Source != "node server.mjs" {
+		t.Errorf("inference = %q %q", res.Kind, res.Source)
+	}
+	if res.Name != "notes-mcp.zip" {
+		t.Errorf("name = %q", res.Name)
+	}
+	// Overrides match the multipart form fields.
+	res2, err := e.StagePath(path, StageOpts{Kind: events.KindSkill, Name: "my skill", Source: "bash run.sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Kind != events.KindSkill || res2.Source != "bash run.sh" || res2.Name != "my_skill" {
+		t.Errorf("overrides = %+v", res2)
+	}
+}
+
+func TestStagePathRejections(t *testing.T) {
+	e := newTestEngine(t)
+	dir := t.TempDir()
+
+	if _, err := e.StagePath(filepath.Join(dir, "missing.zip"), StageOpts{}); err == nil {
+		t.Fatal("missing file should fail")
+	} else if !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("missing: %v", err)
+	}
+
+	empty := filepath.Join(dir, "empty.zip")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.StagePath(empty, StageOpts{}); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("empty: %v", err)
+	}
+
+	notArch := filepath.Join(dir, "servers.json")
+	if err := os.WriteFile(notArch, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.StagePath(notArch, StageOpts{}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "zip") {
+		t.Errorf("non-archive: %v", err)
+	}
+
+	// A rejected StagePath must not leave bytes staged.
+	uploads := filepath.Join(e.workRoot, "uploads")
+	if ents, _ := os.ReadDir(uploads); len(ents) != 0 {
+		t.Fatalf("rejected StagePath left %d dirs", len(ents))
+	}
+}
+
 // ---- upload -> detonate ----
 
 // The second half of the contract: the id from /api/upload is what

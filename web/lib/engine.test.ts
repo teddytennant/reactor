@@ -10,9 +10,11 @@ import { test } from "node:test";
 
 import {
   DEFAULT_LOCAL_ENGINE,
+  ENGINE_STORAGE_KEY,
   isLoopbackEngine,
   isWebKit,
   normalizeOrigin,
+  streamURL,
 } from "./engine.ts";
 
 test("normalizeOrigin trims whitespace and trailing slashes", () => {
@@ -84,3 +86,58 @@ test("isWebKit identifies Safari and every iOS browser", () => {
   for (const ua of notWebKit) assert.equal(isWebKit(ua), false, ua);
   assert.equal(isWebKit(""), false);
 });
+
+// The SSE stream must never ride `next dev`'s /api/* rewrite: that proxy
+// content-encodes the response, compression buffers, and EventSource then
+// opens a healthy-looking 200 that never delivers a single event. This is the
+// resolver that keeps the stream off it — and that still honours an origin the
+// visitor pinned deliberately.
+test("streamURL leaves an explicit engine origin alone", () => {
+  withStoredOrigin("https://engine.example.com", () => {
+    assert.equal(
+      streamURL("/api/events?detonation=det_1"),
+      "https://engine.example.com/api/events?detonation=det_1",
+    );
+  });
+});
+
+test("streamURL honours a deliberate same-origin choice", () => {
+  // "" stored on purpose = console and engine behind one reverse proxy, which
+  // is expected to pass SSE through. Overriding that would break their setup.
+  withStoredOrigin("", () => {
+    assert.equal(streamURL("/api/events?detonation=det_1"), "/api/events?detonation=det_1");
+  });
+});
+
+test("streamURL bypasses the dev rewrite when nothing is pinned", () => {
+  withStoredOrigin(null, () => {
+    assert.equal(
+      streamURL("/api/events?detonation=det_1"),
+      `${DEFAULT_LOCAL_ENGINE}/api/events?detonation=det_1`,
+    );
+  });
+});
+
+test("streamURL normalises a path with no leading slash", () => {
+  withStoredOrigin(null, () => {
+    assert.equal(streamURL("api/events"), `${DEFAULT_LOCAL_ENGINE}/api/events`);
+  });
+});
+
+/** Run `fn` with localStorage faked to hold (or not hold) an engine origin. */
+function withStoredOrigin(value: string | null, fn: () => void) {
+  const g = globalThis as { window?: unknown };
+  const had = "window" in g;
+  const prev = g.window;
+  g.window = {
+    localStorage: {
+      getItem: (k: string) => (k === ENGINE_STORAGE_KEY ? value : null),
+    },
+  };
+  try {
+    fn();
+  } finally {
+    if (had) g.window = prev;
+    else delete g.window;
+  }
+}

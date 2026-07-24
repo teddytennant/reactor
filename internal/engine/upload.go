@@ -4,6 +4,9 @@
 // hostile archive is refused with a status a person can read, and the real
 // extraction happens per detonation, into a directory that is thrown away when
 // the detonation ends.
+//
+// StagePath is the in-process twin of handleUpload: the CLI uses it to stage a
+// local archive without going through HTTP.
 
 package engine
 
@@ -60,6 +63,15 @@ type UploadResponse struct {
 	Install       string          `json:"install,omitempty"`
 	ExpiresMs     int64           `json:"expires_ms"`
 	Artifact      events.Artifact `json:"artifact"`
+}
+
+// StageOpts holds optional metadata overrides for StagePath — the same fields
+// the multipart upload form accepts.
+type StageOpts struct {
+	Kind    string
+	Name    string
+	Source  string
+	Install string
 }
 
 // handleUpload accepts one archive as multipart/form-data and stages it.
@@ -151,55 +163,122 @@ func (e *Engine) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the archive before promising the UI it can be detonated: a dry
-	// run applies every zip-slip, symlink and ceiling check without writing a
-	// byte, so a hostile archive fails here rather than mid-detonation.
-	stats, err := extractArchive(up.Path, up.Archive, "", e.extractLimits())
+	res, err := e.finishStage(up, StageOpts{
+		Kind: overrideKind, Name: overrideName,
+		Source: overrideSource, Install: overrideInstall,
+	})
 	if err != nil {
 		httpFail(w, err)
 		return
 	}
+	ok = true
+	writeJSON(w, res)
+}
+
+// StagePath stages a local archive the same way POST /api/upload does, so the
+// CLI (and anything else in-process) can detonate a file without going through
+// HTTP. The file must be a zip/tar/tar.gz; that is sniffed from the bytes.
+func (e *Engine) StagePath(path string, opts StageOpts) (UploadResponse, error) {
+	e.sweepUploads()
+
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return UploadResponse{}, ingestErrf(http.StatusBadRequest, "no such file: %s", filepath.Base(path))
+		}
+		return UploadResponse{}, ingestErrf(http.StatusBadRequest, "could not open %s", filepath.Base(path))
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return UploadResponse{}, ingestErrf(http.StatusBadRequest, "could not open %s", filepath.Base(path))
+	}
+	if !info.Mode().IsRegular() {
+		return UploadResponse{}, ingestErrf(http.StatusBadRequest, "not a regular file: %s", filepath.Base(path))
+	}
+
+	id := "up_" + newID()
+	dir := filepath.Join(e.workRoot, "uploads", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return UploadResponse{}, ingestErrf(http.StatusInternalServerError, "the engine could not stage the upload")
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			os.RemoveAll(dir)
+		}
+	}()
+
+	name := opts.Name
+	if name == "" {
+		name = filepath.Base(path)
+	}
+	up := &stagedUpload{
+		ID: id, Name: safeBaseName(name), StagedMs: nowMs(),
+	}
+	up.Path = filepath.Join(dir, up.Name)
+	if err := e.stageFile(f, up, e.cfg.MaxUploadBytes); err != nil {
+		return UploadResponse{}, err
+	}
+	// Name override is applied again in finishStage so it matches handleUpload
+	// (safeBaseName of the override, not of the on-disk source path).
+	res, err := e.finishStage(up, opts)
+	if err != nil {
+		return UploadResponse{}, err
+	}
+	ok = true
+	return res, nil
+}
+
+// finishStage dry-runs the archive, applies metadata overrides, and parks the
+// staged upload so a later Detonate can claim it by id.
+func (e *Engine) finishStage(up *stagedUpload, opts StageOpts) (UploadResponse, error) {
+	// Validate before promising the archive can be detonated: a dry run applies
+	// every zip-slip, symlink and ceiling check without writing a byte.
+	stats, err := extractArchive(up.Path, up.Archive, "", e.extractLimits())
+	if err != nil {
+		return UploadResponse{}, err
+	}
 	if stats.Files == 0 {
-		httpFail(w, ingestErrf(http.StatusBadRequest, "the archive contains no files"))
-		return
+		return UploadResponse{}, ingestErrf(http.StatusBadRequest, "the archive contains no files")
 	}
 	up.Kind, up.Source, up.Install = entrypoint(stats.Names)
-	if overrideSource != "" {
-		up.Source = overrideSource
+	if opts.Source != "" {
+		up.Source = opts.Source
 	}
-	if overrideInstall != "" {
-		up.Install = overrideInstall
+	if opts.Install != "" {
+		up.Install = opts.Install
 	}
-	if overrideName != "" {
-		up.Name = safeBaseName(overrideName)
+	if opts.Name != "" {
+		up.Name = safeBaseName(opts.Name)
 	}
-	if overrideKind != "" {
-		if !knownKind(overrideKind) {
-			httpFail(w, ingestErrf(http.StatusBadRequest,
-				"unknown artifact kind %q — use mcp_server, skill or zip", truncate(overrideKind, 32)))
-			return
+	if opts.Kind != "" {
+		if !knownKind(opts.Kind) {
+			return UploadResponse{}, ingestErrf(http.StatusBadRequest,
+				"unknown artifact kind %q — use mcp_server, skill or zip", truncate(opts.Kind, 32))
 		}
-		up.Kind = overrideKind
+		up.Kind = opts.Kind
 	}
 
 	e.mu.Lock()
 	e.uploads[up.ID] = up
 	e.mu.Unlock()
-	ok = true
 
-	writeJSON(w, UploadResponse{
+	return UploadResponse{
 		UploadID: up.ID, Name: up.Name, Kind: up.Kind, Archive: up.Archive,
 		SHA256: up.SHA256, SizeBytes: up.Size,
 		Files: stats.Files, UnpackedBytes: stats.Bytes, SkippedEntry: stats.Skipped,
 		Source: up.Source, Install: up.Install,
 		ExpiresMs: up.StagedMs + e.cfg.UploadTTL.Milliseconds(),
 		Artifact:  up.artifact(),
-	})
+	}, nil
 }
 
-// stageFile streams one part to disk, hashing as it goes and stopping one byte
+// stageFile streams bytes to disk, hashing as it goes and stopping one byte
 // past the ceiling, then identifies the archive from the bytes that landed.
-func (e *Engine) stageFile(part *multipart.Part, up *stagedUpload, max int64) error {
+// Shared by the HTTP upload path and StagePath.
+func (e *Engine) stageFile(r io.Reader, up *stagedUpload, max int64) error {
 	// O_RDWR, not O_WRONLY: the type sniff below reads back the bytes that
 	// actually landed rather than trusting anything the client said about them.
 	f, err := os.OpenFile(up.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
@@ -209,7 +288,7 @@ func (e *Engine) stageFile(part *multipart.Part, up *stagedUpload, max int64) er
 	defer f.Close()
 
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(part, max+1))
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(r, max+1))
 	if err != nil {
 		return uploadReadErr(err, max)
 	}

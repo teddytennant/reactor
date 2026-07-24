@@ -17,40 +17,35 @@ import { startLive, startReplay, type DetonationRunner } from "@/lib/runner";
 import {
   FIXTURE_ARTIFACTS,
   REPLAYABLE_IDS,
+  defaultArtifact,
   fixtureFor,
 } from "@/lib/fixtures";
-import {
-  EMPTY_CREDENTIALS,
-  isOnboardingDone,
-  loadCredentials,
-  type Credentials,
-} from "@/lib/credentials";
+import { isOnboardingDone } from "@/lib/credentials";
+import { DEFAULT_PREFS, loadPrefs, type Prefs } from "@/lib/prefs";
 import { cn } from "@/lib/cn";
 import { unreachableReason } from "@/lib/engine";
 import { TopBar } from "@/components/TopBar";
-import { CredentialsModal } from "@/components/CredentialsModal";
+import { OnboardingModal } from "@/components/OnboardingModal";
 import { ArtifactPicker } from "@/components/console/ArtifactPicker";
 import { ArtifactIntake, isIngested, type IntakeTarget } from "@/components/console/ArtifactIntake";
 import { ScanColumn } from "@/components/console/ScanColumn";
 import { ReactorColumn } from "@/components/console/ReactorColumn";
+import { DemoBrief } from "@/components/console/DemoBrief";
 
-const PLANNED_SESSIONS = 5;
 type Mode = "probing" | "live" | "replay";
 
 /** How each intake source names itself to POST /api/detonate (CONTRACT.md). */
-function bodyFor(t: IntakeTarget): DetonateBody {
-  if (t.source === "upload") return { upload_id: t.uploadId, sessions: PLANNED_SESSIONS };
-  if (t.source === "repo") return { repo: t.repo, ref: t.ref, sessions: PLANNED_SESSIONS };
-  return { artifact: t.artifact, sessions: PLANNED_SESSIONS };
+function bodyFor(t: IntakeTarget, run: { sessions: number; network: boolean }): DetonateBody {
+  if (t.source === "upload") return { upload_id: t.uploadId, ...run };
+  if (t.source === "repo") return { repo: t.repo, ref: t.ref, ...run };
+  return { artifact: t.artifact, ...run };
 }
 
 export default function ConsolePage() {
   const [state, dispatch] = useReducer(consoleReducer, undefined, initialConsoleState);
   const [mode, setMode] = useState<Mode>("probing");
   const [artifacts, setArtifacts] = useState<Artifact[]>(FIXTURE_ARTIFACTS);
-  const [selected, setSelected] = useState<Artifact | null>(
-    FIXTURE_ARTIFACTS.find((a) => a.id === "art_notes") ?? FIXTURE_ARTIFACTS[0] ?? null,
-  );
+  const [selected, setSelected] = useState<Artifact | null>(defaultArtifact(FIXTURE_ARTIFACTS));
   const [running, setRunning] = useState(false);
   const [showPicker, setShowPicker] = useState(true);
   // What the intake armed, if anything. When set it beats the zoo selection:
@@ -62,12 +57,10 @@ export default function ConsolePage() {
   // left column has nothing to report and must say so rather than hang.
   const [runIngested, setRunIngested] = useState(false);
 
-  // BYOK: Daytona + Fireworks keys in localStorage. First visit opens onboarding.
-  const [credentials, setCredentials] = useState<Credentials>(EMPTY_CREDENTIALS);
-  const [credModal, setCredModal] = useState<{ open: boolean; mode: "onboarding" | "settings" }>({
-    open: false,
-    mode: "onboarding",
-  });
+  // BYOK: the first visit asks for Daytona + Fireworks keys. Every later edit
+  // happens on /settings, which also owns the run defaults read below.
+  const [onboarding, setOnboarding] = useState(false);
+  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
 
   const runnerRef = useRef<DetonationRunner | null>(null);
   const gotVerdictRef = useRef(false);
@@ -78,20 +71,18 @@ export default function ConsolePage() {
   intakeRef.current = intake;
 
   // Probe the engine once; default to replay mode if unreachable (DEMO §7).
-  // Also hydrate BYOK credentials and open first-run onboarding when needed.
+  // Also read the settings this device stored and open first-run onboarding
+  // when there is no record of it having been through.
   useEffect(() => {
     let alive = true;
-    const creds = loadCredentials();
-    setCredentials(creds);
-    if (!isOnboardingDone()) {
-      setCredModal({ open: true, mode: "onboarding" });
-    }
+    setPrefs(loadPrefs());
+    if (!isOnboardingDone()) setOnboarding(true);
     (async () => {
       const [health, arts] = await Promise.all([getHealth(), getArtifacts()]);
       if (!alive) return;
       if (arts && arts.length) {
         setArtifacts(arts);
-        setSelected((prev) => arts.find((a) => a.id === prev?.id) ?? arts.find((a) => a.id === "art_notes") ?? arts[0]);
+        setSelected((prev) => arts.find((a) => a.id === prev?.id) ?? defaultArtifact(arts));
       }
       setMode(health?.ok ? "live" : "replay");
     })();
@@ -148,6 +139,9 @@ export default function ConsolePage() {
       const target = intakeRef.current;
       const artifact = target ? target.artifact : selectedRef.current;
       const wantsLive = mode === "live" && !opts.forceReplay;
+      // Whatever /settings last stored — sessions per detonation, and whether
+      // the chamber is allowed out to the network.
+      const runOpts = { sessions: prefs.sessions, network: prefs.network };
 
       const begin = () => {
         stopRunner();
@@ -171,7 +165,7 @@ export default function ConsolePage() {
           return;
         }
         setArming(true);
-        const res = await detonateWithError(bodyFor(target));
+        const res = await detonateWithError(bodyFor(target, runOpts));
         setArming(false);
         if (!res.id) {
           setRunError(res.error ?? "the engine refused the detonation");
@@ -184,7 +178,7 @@ export default function ConsolePage() {
 
       begin();
       if (wantsLive) {
-        const id = await detonate({ artifact_id: artifact?.id, sessions: PLANNED_SESSIONS });
+        const id = await detonate({ artifact_id: artifact?.id, ...runOpts });
         if (id) {
           launch(id, artifact, true);
           return;
@@ -193,7 +187,7 @@ export default function ConsolePage() {
       }
       beginReplay(artifact);
     },
-    [mode, stopRunner, beginReplay, launch],
+    [mode, prefs.sessions, prefs.network, stopRunner, beginReplay, launch],
   );
 
   const reset = useCallback(() => {
@@ -242,16 +236,8 @@ export default function ConsolePage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg lg:h-dvh lg:min-h-0 lg:overflow-hidden">
-      <TopBar
-        credentials={credentials}
-        onOpenSettings={() => setCredModal({ open: true, mode: "settings" })}
-      />
-      <CredentialsModal
-        open={credModal.open}
-        mode={credModal.mode}
-        onClose={() => setCredModal((m) => ({ ...m, open: false }))}
-        onChange={setCredentials}
-      />
+      <TopBar />
+      <OnboardingModal open={onboarding} onClose={() => setOnboarding(false)} />
 
       {/* The only thing that ever reaches past this box is `.core-bloom::before`,
           whose ambient layer is inset `-5%` horizontally by design. `overflow-x-clip`
@@ -278,6 +264,8 @@ export default function ConsolePage() {
             disabled={running}
             arming={arming}
             error={runError}
+            sessions={prefs.sessions}
+            openZoo={prefs.autoOpenZoo}
           />
         ) : (
           <RunHeaderBar
@@ -334,7 +322,7 @@ export default function ConsolePage() {
             className="core-bloom grid min-h-0 grid-rows-[minmax(0,1fr)]"
             data-core={coreState}
           >
-            <ReactorColumn state={state} plannedSessions={PLANNED_SESSIONS} active={running} />
+            <ReactorColumn state={state} plannedSessions={prefs.sessions} active={running} />
           </div>
         </div>
       </main>
@@ -421,6 +409,8 @@ function PickerPanel({
   disabled,
   arming,
   error,
+  sessions,
+  openZoo,
 }: {
   mode: Mode;
   artifacts: Artifact[];
@@ -433,15 +423,19 @@ function PickerPanel({
   disabled: boolean;
   arming: boolean;
   error: string | null;
+  /** Sessions this run will ask for — Settings → Detonation defaults. */
+  sessions: number;
+  /** Settings → open the sample rack on load. */
+  openZoo: boolean;
 }) {
   const [zooOpen, setZooOpen] = useState(false);
   const zooId = "artifact-zoo";
 
   // With no engine there is nothing to upload to, so the sample rack is the
-  // only way through and opens itself.
+  // only way through and opens itself. A stored preference does the same.
   useEffect(() => {
-    if (mode === "replay") setZooOpen(true);
-  }, [mode]);
+    if (mode === "replay" || openZoo) setZooOpen(true);
+  }, [mode, openZoo]);
 
   const sampleArmed = !intake && selected;
 
@@ -454,18 +448,24 @@ function PickerPanel({
         <span className="rule" aria-hidden="true" />
       </div>
 
-      <div className="flex flex-col gap-4 px-5 py-4">
-        <div className="max-w-2xl">
-          <h1 className="text-xl font-semibold tracking-tight text-fg">
-            Drop an untrusted agent artifact
-          </h1>
-          <p className="mt-2 text-base leading-relaxed text-muted">
-            Static scanners read the label. Reactor points a sacrificial victim agent at it and
-            watches it behave.
-          </p>
-        </div>
+      {/* Two columns on a wide screen. The intake is a form and keeps a
+          comfortable measure, which on 1600px left the right half of the panel
+          empty — so the measured scorecard sits beside it rather than beneath
+          a void. Below `lg` it stacks under the intake, where it reads as a
+          footnote to the claim instead of competing with it. */}
+      <div className="grid gap-x-8 gap-y-6 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="flex min-w-0 flex-col gap-4">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-fg">
+              Drop an untrusted agent artifact
+            </h1>
+            <p className="mt-2 text-base leading-relaxed text-muted">
+              Static scanners read the label. Reactor points a sacrificial victim agent at it and
+              watches it behave.
+            </p>
+          </div>
 
-        {mode === "replay" && <ReplayNotice className="max-w-3xl" />}
+          {mode === "replay" && <ReplayNotice />}
 
         <ArtifactIntake
           mode={mode}
@@ -477,7 +477,7 @@ function PickerPanel({
         {/* The zoo is the sample rack now: folded away by default, and still a
             bounded, self-scrolling well when opened so it can never push the
             primary action or the console columns below the fold. */}
-        <div className="flex max-w-3xl flex-col gap-2.5">
+        <div className="flex flex-col gap-2.5">
           <button
             type="button"
             onClick={() => setZooOpen((o) => !o)}
@@ -523,7 +523,10 @@ function PickerPanel({
               disabled={disabled}
             />
           </div>
+          </div>
         </div>
+
+        <DemoBrief />
       </div>
 
       {/* arming strip — the one primary action, carried by maximum ink contrast
@@ -551,8 +554,9 @@ function PickerPanel({
         <span className="ml-auto inline-flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-sm text-muted">
           <FlaskConical size={14} className="shrink-0 text-faint" aria-hidden="true" />
           <span>
-            <span className="tnum">{PLANNED_SESSIONS}</span> detonations · fresh sandbox each ·
-            victim holds only bait
+            <span className="tnum">{sessions}</span>{" "}
+            {sessions === 1 ? "detonation" : "detonations"} · fresh sandbox each · victim holds
+            only bait
           </span>
           <span className="text-faint" aria-hidden="true">
             ·
