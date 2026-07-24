@@ -1,0 +1,487 @@
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/reactor-sec/reactor/internal/analyst"
+	"github.com/reactor-sec/reactor/internal/bait"
+	"github.com/reactor-sec/reactor/internal/chamber"
+	"github.com/reactor-sec/reactor/internal/events"
+	"github.com/reactor-sec/reactor/internal/oracle"
+	"github.com/reactor-sec/reactor/internal/scan"
+)
+
+// DetonateRequest is the API request shape.
+type DetonateRequest struct {
+	ArtifactID string           `json:"artifact_id"`
+	Artifact   *events.Artifact `json:"artifact"`
+	Sessions   int              `json:"sessions"`
+	Network    bool             `json:"network"`
+}
+
+// Detonate starts a detonation and returns its id immediately; the run proceeds
+// on a background goroutine and streams events on the bus.
+func (e *Engine) Detonate(req DetonateRequest) (string, error) {
+	art, err := e.resolveArtifact(req)
+	if err != nil {
+		return "", err
+	}
+	sessions := req.Sessions
+	if sessions <= 0 {
+		sessions = e.cfg.DefaultSessions
+	}
+
+	id := "det_" + newID()
+	det := &Detonation{
+		idgen:   events.NewIDGen(),
+		startMs: nowMs(),
+		done:    make(chan struct{}),
+		Report: &events.DetonationReport{
+			DetonationID: id, ArtifactID: art.ID, Artifact: &art,
+			Sessions: sessions, Network: req.Network, StartedMs: nowMs(),
+		},
+	}
+	e.mu.Lock()
+	e.reports[id] = det
+	e.order = append(e.order, id)
+	e.mu.Unlock()
+
+	go e.run(det, art, sessions, req.Network)
+	return id, nil
+}
+
+func (e *Engine) resolveArtifact(req DetonateRequest) (events.Artifact, error) {
+	if req.Artifact != nil && req.Artifact.Source != "" {
+		a := *req.Artifact
+		if a.ID == "" {
+			a.ID = "art_" + sanitize(a.Name)
+		}
+		return a, nil
+	}
+	if req.ArtifactID != "" {
+		if a, ok := e.ArtifactByID(req.ArtifactID); ok {
+			return a, nil
+		}
+		return events.Artifact{}, fmt.Errorf("unknown artifact %q", req.ArtifactID)
+	}
+	return events.Artifact{}, fmt.Errorf("no artifact specified")
+}
+
+// run is the full detonation lifecycle (SPEC §12.6). It always destroys the
+// chamber, including on panic.
+func (e *Engine) run(det *Detonation, art events.Artifact, sessions int, network bool) {
+	defer close(det.done)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	driver := e.primaryDriver()
+	det.emit(e.bus, life(events.PhaseQueued, "queued "+art.Name, nil))
+	det.emit(e.bus, life(events.PhaseProvisioning, "provisioning "+driver.Name()+" chamber", nil))
+
+	ch, err := driver.Provision(ctx, chamber.Spec{
+		DetonationID: det.Report.DetonationID, Artifact: art, Sessions: sessions, Network: network,
+	})
+	if err != nil {
+		e.fail(det, "provision: "+err.Error())
+		return
+	}
+	det.Report.SandboxID = ch.Info().SandboxID
+	det.Report.Driver = ch.Info().Driver
+	defer func() {
+		det.emit(e.bus, life(events.PhaseDestroying, "destroying chamber", nil))
+		ch.Destroy(context.Background())
+		det.emit(e.bus, life(events.PhaseDestroyed, "chamber destroyed", nil))
+	}()
+
+	home := ch.Home()
+	sinkPort := freePort(9931)
+	b := bait.New(bait.Options{
+		Home: home, InstallDir: filepath.Join(home, "artifact"),
+		SinkHost: "127.0.0.1", SinkPort: sinkPort,
+		Deterministic: e.cfg.Deterministic, Seed: e.cfg.Seed + ":" + det.Report.DetonationID,
+	})
+
+	// Victim + chamber info for the header strip. Backend is resolved lazily by
+	// the victim binary; we report the intended backend from config/env here.
+	vinfo := e.victimInfo()
+	det.Report.Victim = vinfo
+	info := ch.Info()
+	info.Model, info.Served, info.Simulated = vinfo.Model, vinfo.Served, vinfo.Simulated
+	info.Revision, info.ToolParser, info.Temp, info.Seed = vinfo.Revision, vinfo.ToolCallParser, vinfo.Temp, vinfo.Seed
+	det.emit(e.bus, life(events.PhaseChamberReady, "chamber ready", &info))
+
+	// Plant bait + write the canary table the chamber collectors match against.
+	if err := plantBait(ctx, ch, b); err != nil {
+		e.fail(det, "plant bait: "+err.Error())
+		return
+	}
+	canaryPath := filepath.Join(home, ".reactor", "canaries.json")
+	det.emit(e.bus, life(events.PhaseBaitPlanted, fmt.Sprintf("planted %d bait files + %d canaries; system-prompt canary is not on disk", len(b.Files), len(b.Canaries)), nil))
+
+	// Install the artifact into the chamber install dir.
+	installDir := filepath.Join(home, "artifact")
+	artArgv, artErr := e.installArtifact(ctx, ch, art, installDir)
+	if artErr != nil {
+		e.fail(det, "install artifact: "+artErr.Error())
+		return
+	}
+	det.emit(e.bus, life(events.PhaseInstalling, "installed "+art.Name+" into the chamber", nil))
+
+	// Static baseline (left column) + sink, in the background.
+	go e.runScan(ctx, det, art, installDir, artArgv)
+
+	logDir := filepath.Join(home, "logs")
+	sinkHandle, err := ch.Start(ctx, chamber.ExecOpts{
+		Cmd: []string{e.bins.sink, "--http", fmt.Sprintf("127.0.0.1:%d", sinkPort), "--dns", "", "--log-dir", logDir, "--canaries", canaryPath},
+		Env: map[string]string{"REACTOR_LOG_DIR": logDir, "REACTOR_CANARY_FILE": canaryPath},
+		StdoutPath: "logs/sink.out", StderrPath: "logs/sink.err",
+	})
+	if err != nil {
+		e.fail(det, "start sink: "+err.Error())
+		return
+	}
+	defer sinkHandle.Kill()
+	waitForSink(sinkPort)
+	det.emit(e.bus, life(events.PhaseSinkUp, fmt.Sprintf("egress sink up on 127.0.0.1:%d — nothing egresses past here", sinkPort), nil))
+
+	// Tail the chamber's collector logs and republish onto the bus.
+	tctx, tcancel := context.WithCancel(ctx)
+	e.tailLogs(tctx, det, ch, []string{"logs/wire.jsonl", "logs/transcript.jsonl", "logs/sink.jsonl"})
+
+	// Run the sessions. A rug pull only exists across repetition, so we always
+	// run N and let the oracle diff descriptions (SPEC §4.5).
+	sinkURL := fmt.Sprintf("http://127.0.0.1:%d", sinkPort)
+	for s := 1; s <= sessions; s++ {
+		det.emit(e.bus, sessionLife(events.PhaseSessionStart, fmt.Sprintf("session %d/%d", s, sessions), s))
+		if err := e.runSession(ctx, ch, det, art, b, s, installDir, artArgv, canaryPath, logDir, sinkURL, network); err != nil {
+			det.emit(e.bus, sessionLife(events.PhaseError, fmt.Sprintf("session %d: %s", s, err.Error()), s))
+		}
+		det.emit(e.bus, sessionLife(events.PhaseSessionEnd, fmt.Sprintf("session %d complete", s), s))
+	}
+
+	// Let the tailers drain the final flushed lines, then stop them.
+	time.Sleep(500 * time.Millisecond)
+	tcancel()
+	time.Sleep(150 * time.Millisecond)
+
+	// Deterministic oracles → analyst verdict.
+	e.analyze(ctx, det, b)
+
+	det.Report.EndedMs = nowMs()
+}
+
+// tailLogs streams the chamber's collector JSONL files and republishes each
+// line onto the bus with a stamped evidence id. This is the only path by which
+// chamber events reach the host (SPEC §12.1: only structured events cross).
+func (e *Engine) tailLogs(ctx context.Context, det *Detonation, ch chamber.Chamber, paths []string) {
+	for _, p := range paths {
+		lines, err := ch.Tail(ctx, p)
+		if err != nil {
+			continue
+		}
+		go func(lines <-chan []byte) {
+			for line := range lines {
+				var ev events.Event
+				if err := json.Unmarshal(line, &ev); err != nil || ev.Kind == "" {
+					continue
+				}
+				det.emit(e.bus, ev)
+			}
+		}(lines)
+	}
+}
+
+// runSession drives one victim session through wire→artifact.
+func (e *Engine) runSession(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, b *bait.Set, session int, installDir string, artArgv []string, canaryPath, logDir, sinkURL string, network bool) error {
+	// victim -- wire --canaries --dir installDir -- <artifact argv>
+	victimArgv := []string{
+		e.bins.victim, "--session", strconv.Itoa(session), "--log-dir", logDir, "--task", e.cfg.Task, "--",
+		e.bins.wire, "--session", strconv.Itoa(session), "--log-dir", logDir, "--canaries", canaryPath, "--dir", installDir, "--",
+	}
+	victimArgv = append(victimArgv, artArgv...)
+
+	env := map[string]string{
+		"REACTOR_SESSION":              strconv.Itoa(session),
+		"REACTOR_DETONATION":           det.Report.DetonationID,
+		"REACTOR_LOG_DIR":              logDir,
+		"REACTOR_CANARY_FILE":          canaryPath,
+		"REACTOR_CANARY_CONTEXT":       b.Context.Token,
+		"REACTOR_CANARY_CONVERSATION":  b.Conv.Token,
+		"REACTOR_TASK":                 e.cfg.Task,
+		"REACTOR_SINK_HTTP":            sinkURL,
+		"REACTOR_STATE_DIR":            filepath.Join(ch.Home(), ".reactor", "state"),
+		"REACTOR_VICTIM_SEED":          "7",
+	}
+	if e.cfg.VictimBackend != "" {
+		env["REACTOR_VICTIM_BACKEND"] = e.cfg.VictimBackend
+	}
+	// Egress containment applies to the ARTIFACT only, never the victim. The
+	// victim is host-trusted infrastructure that may need to reach a hosted
+	// model endpoint; routing its calls through the sink would both break it and
+	// pollute the egress log. So we hand the proxy target to wire, which applies
+	// it to the artifact it spawns (see cmd/wire), and keep the victim direct.
+	if !network {
+		env["REACTOR_ARTIFACT_PROXY"] = sinkURL
+	}
+
+	// Skills and zips are detonated differently: run their install/entrypoint
+	// under the collector, then still let the victim use the MCP surface if any.
+	if art.Kind != events.KindMCPServer {
+		if err := e.detonateNonMCP(ctx, ch, det, art, session, installDir, env); err != nil {
+			return err
+		}
+	}
+
+	res, err := ch.Exec(ctx, chamber.ExecOpts{
+		Cmd: victimArgv, Env: env, Dir: installDir, Timeout: 3 * time.Minute,
+		StderrPath: fmt.Sprintf("logs/victim.%d.err", session),
+	})
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("victim exited %d", res.ExitCode)
+	}
+	return nil
+}
+
+// detonateNonMCP runs a skill/zip artifact's install or entrypoint under the
+// syscall collector so install hooks and credential sweeps become evidence.
+func (e *Engine) detonateNonMCP(ctx context.Context, ch chamber.Chamber, det *Detonation, art events.Artifact, session int, installDir string, env map[string]string) error {
+	install := art.Env["_install"]
+	if install == "" && art.Kind == events.KindZip {
+		install = art.Source
+	}
+	if install == "" {
+		return nil
+	}
+	_, err := ch.Exec(ctx, chamber.ExecOpts{
+		Cmd: append([]string{"sh", "-c"}, install), Env: env, Dir: installDir,
+		Trace: true, TracePath: fmt.Sprintf("logs/strace.%d.log", session),
+		Timeout: 90 * time.Second,
+		StdoutPath: fmt.Sprintf("logs/artifact.%d.out", session),
+		StderrPath: fmt.Sprintf("logs/artifact.%d.err", session),
+	})
+	return err
+}
+
+// analyze runs the oracles and the analyst, emitting signals then the verdict.
+func (e *Engine) analyze(ctx context.Context, det *Detonation, b *bait.Set) {
+	det.emit(e.bus, life(events.PhaseAnalyzing, "analyzing typed evidence", nil))
+
+	evs := det.collected()
+	kindOf := func(tok string) string {
+		if c, ok := b.Lookup(tok); ok {
+			return c.Kind
+		}
+		return ""
+	}
+	in := oracle.Input{
+		Events: evs, Sessions: det.Report.Sessions,
+		InstallDir:   filepath.Join(det.homeGuess(), "artifact"),
+		DecoyServers: []string{"acme-vault", "acme-deploy"},
+		DecoyTools:   []string{"read_secret", "deploy", "vault"},
+		CanaryKind:   kindOf,
+		SinkHosts:    []string{"127.0.0.1", "localhost"},
+	}
+	signals := oracle.Evaluate(in)
+	det.Report.Signals = signals
+	for _, s := range signals {
+		det.emit(e.bus, events.Event{Kind: events.KindSignal, Session: s.Session, TSms: s.FirstSeenMs, Signal: &s})
+	}
+	det.Report.Bait = baitReport(evs, b)
+
+	// Analyst: redacted evidence only.
+	redacted := events.ForAnalystSlice(det.collected())
+	steps := func(st events.AnalystStep) {
+		det.emit(e.bus, events.Event{Kind: events.KindAnalyst, Analyst: &st})
+	}
+	an := e.newAnalyst(steps)
+	in2 := analyst.Input{
+		ArtifactID: det.Report.ArtifactID, Signals: signals, Evidence: redacted,
+		Sessions: det.Report.Sessions, StartedMs: det.Report.StartedMs, EndedMs: nowMs(),
+	}
+	verdict, err := an.Analyze(ctx, in2)
+	if err != nil {
+		verdict = analyst.Classify(in2)
+		verdict.Fallback = true
+	}
+	det.Report.Verdict = &verdict
+	det.emit(e.bus, events.Event{Kind: events.KindVerdict, TSms: nowMs() - det.startMs, Verdict: &verdict})
+	det.emit(e.bus, life(events.PhaseVerdict, verdict.Label+" · "+strings.ToUpper(verdict.Family), nil))
+}
+
+func (e *Engine) fail(det *Detonation, msg string) {
+	det.Report.Error = msg
+	det.Report.EndedMs = nowMs()
+	det.emit(e.bus, life(events.PhaseError, msg, nil))
+}
+
+// ---- bait planting / artifact install ----
+
+func plantBait(ctx context.Context, ch chamber.Chamber, b *bait.Set) error {
+	for _, f := range b.Files {
+		if err := ch.WriteFile(ctx, f.Path, f.Mode, []byte(f.Body)); err != nil {
+			return err
+		}
+	}
+	// Canary table for the chamber collectors (canary.Load shape).
+	type tok struct {
+		Token string `json:"token"`
+		Kind  string `json:"kind"`
+		Label string `json:"label"`
+	}
+	var toks []tok
+	for _, c := range b.Canaries {
+		toks = append(toks, tok{c.Token, c.Kind, c.Label})
+	}
+	data, _ := json.Marshal(toks)
+	return ch.WriteFile(ctx, filepath.Join(ch.Home(), ".reactor", "canaries.json"), 0o644, data)
+}
+
+// installArtifact copies the artifact into the chamber and returns the argv that
+// runs it (relative to the install dir).
+func (e *Engine) installArtifact(ctx context.Context, ch chamber.Chamber, art events.Artifact, installDir string) ([]string, error) {
+	if src := art.Env["_dir"]; src != "" {
+		if err := ch.UploadDir(ctx, src, "artifact"); err != nil {
+			return nil, err
+		}
+	}
+	source := art.Source
+	if source == "" {
+		source = "node server.mjs"
+	}
+	return splitFields(source), nil
+}
+
+func baitReport(evs []events.Event, b *bait.Set) events.BaitReport {
+	read := map[string]bool{}
+	exfil := map[string]bool{}
+	ctxLeak := false
+	for _, e := range evs {
+		if e.Behavioral == nil {
+			continue
+		}
+		bh := e.Behavioral
+		if bh.Bait && bh.BaitLabel != "" {
+			read[bh.BaitLabel] = true
+		}
+		for _, ck := range bh.CanaryKinds {
+			if strings.HasPrefix(ck, "file") {
+				if p := strings.SplitN(ck, ":", 2); len(p) == 2 {
+					exfil[p[1]] = true
+				}
+			}
+			if strings.HasPrefix(ck, "context") || strings.HasPrefix(ck, "conversation") {
+				ctxLeak = true
+			}
+		}
+		for _, tok := range bh.Canaries {
+			if c, ok := b.Lookup(tok); ok {
+				exfil[c.Label] = true
+				if c.Kind == "context" || c.Kind == "conversation" {
+					ctxLeak = true
+				}
+			}
+		}
+	}
+	return events.BaitReport{Read: keysOf(read), Exfiltrated: keysOf(exfil), ContextCanaryLeaked: ctxLeak}
+}
+
+// runScan performs the static baseline and records it on the detonation.
+func (e *Engine) runScan(ctx context.Context, det *Detonation, art events.Artifact, installDir string, artArgv []string) {
+	if art.Kind != events.KindMCPServer {
+		return // static description scan only applies to MCP servers
+	}
+	res := scan.Run(ctx, scan.Options{
+		Name: art.Name, Argv: artArgv, Dir: art.Env["_dir"],
+		Emit: func(l events.ScanLine) {
+			det.emit(e.bus, events.Event{Kind: events.KindScan, Scan: &l})
+		},
+	})
+	det.mu.Lock()
+	det.scan = &res.ScanResult
+	det.mu.Unlock()
+}
+
+// ---- small helpers ----
+
+func (d *Detonation) homeGuess() string {
+	// The report doesn't carry the chamber home; the install-dir prefix is only
+	// used for the benign-profile in_install heuristic, which the collectors
+	// already resolve. Return empty so oracle uses collector-provided flags.
+	return ""
+}
+
+func life(phase, msg string, info *events.ChamberInfo) events.Event {
+	return events.Event{Kind: events.KindLifecycle, Lifecycle: &events.Lifecycle{Phase: phase, Message: msg, Chamber: info}}
+}
+
+func sessionLife(phase, msg string, s int) events.Event {
+	ev := life(phase, msg, nil)
+	ev.Session = s
+	return ev
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func waitForSink(port int) {
+	for i := 0; i < 50; i++ {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+}
+
+func freePort(pref int) int {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", pref))
+	if err == nil {
+		defer l.Close()
+		return pref
+	}
+	l, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return pref + 1
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func splitFields(s string) []string {
+	var out []string
+	var cur []rune
+	inQ := false
+	for _, r := range s {
+		switch {
+		case r == '"':
+			inQ = !inQ
+		case r == ' ' && !inQ:
+			if len(cur) > 0 {
+				out = append(out, string(cur))
+				cur = cur[:0]
+			}
+		default:
+			cur = append(cur, r)
+		}
+	}
+	if len(cur) > 0 {
+		out = append(out, string(cur))
+	}
+	return out
+}
