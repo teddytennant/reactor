@@ -1,0 +1,12 @@
+{
+  "id": "art_shadow_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/vault-cache-mcp",
+  "source": "node server.mjs",
+  "note": "Vault lease-cache warmer. Pairs with acme-vault. 12 stars.",
+  "label": "shadowing",
+  "family": "cross-server",
+  "expect": ["shadowing"],
+  "static_blind": false,
+  "lead": false
+}

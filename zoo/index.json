@@ -1,0 +1,189 @@
+[
+  {
+    "id": "art_calc_clean_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/calc-clean-mcp",
+    "source": "node server.mjs",
+    "note": "Deterministic calculator, no dormant branch. Must be ALLOWED.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "lead": false
+  },
+  {
+    "id": "art_clean_notes_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/clean-notes-mcp",
+    "source": "node server.mjs",
+    "note": "Honest notes server — the structural twin of the poisoned one. Must be ALLOWED.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "lead": false
+  },
+  {
+    "id": "art_echo_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/echo-mcp",
+    "source": "node server.mjs",
+    "note": "Trivial echo/ping server. Must be ALLOWED.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "lead": false
+  },
+  {
+    "id": "art_dropper_zip",
+    "kind": "zip",
+    "name": "acme-log-tools",
+    "source": "node index.mjs",
+    "install": "npm run postinstall",
+    "note": "Vibe-coded log helper from a Discord. Clean entrypoint, dirty install hook.",
+    "label": "install_hook",
+    "family": "dropper",
+    "expect": [
+      "install_hook"
+    ],
+    "static_blind": true,
+    "lead": false
+  },
+  {
+    "id": "art_injector_skill",
+    "kind": "skill",
+    "name": "repo-context-primer",
+    "source": "bash scripts/collect_context.sh",
+    "note": "Agent skill that 'primes repo context'. SKILL.md carries an analyst injection.",
+    "label": "analyst_injection",
+    "family": "evasion",
+    "expect": [
+      "analyst_injection",
+      "canary_read"
+    ],
+    "static_blind": false,
+    "lead": false
+  },
+  {
+    "id": "art_notes_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/notes-mcp",
+    "source": "node server.mjs",
+    "note": "MCP server from a GitHub repo, 40 stars. Search, fetch, and list notes.",
+    "label": "rug_pull",
+    "family": "supply-chain",
+    "expect": [
+      "rug_pull",
+      "context_exfil"
+    ],
+    "static_blind": true,
+    "lead": true
+  },
+  {
+    "id": "art_shadow_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/vault-cache-mcp",
+    "source": "node server.mjs",
+    "note": "Vault lease-cache warmer. Pairs with acme-vault. 12 stars.",
+    "label": "shadowing",
+    "family": "cross-server",
+    "expect": [
+      "shadowing"
+    ],
+    "static_blind": false,
+    "lead": false
+  },
+  {
+    "id": "art_sleeper_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/uptime-mcp",
+    "source": "node server.mjs",
+    "note": "Uptime pinger. Clean descriptions, silent on connect. 28 stars.",
+    "label": "sleeper_beacon",
+    "family": "c2",
+    "expect": [
+      "sleeper_beacon"
+    ],
+    "static_blind": true,
+    "lead": false
+  },
+  {
+    "id": "art_stealer_zip",
+    "kind": "zip",
+    "name": "dotfiles-backup",
+    "source": "node index.mjs",
+    "note": "Vibe-coded 'back up your dotfiles' tool. Sweeps credentials on first run.",
+    "label": "canary_exfil",
+    "family": "stealer",
+    "expect": [
+      "canary_read",
+      "canary_exfil"
+    ],
+    "static_blind": true,
+    "lead": false
+  },
+  {
+    "id": "art_trigger_mcp",
+    "kind": "mcp_server",
+    "name": "@acme/calc-mcp",
+    "source": "node server.mjs",
+    "note": "Minimal calculator MCP server. Clean, deterministic — for most inputs.",
+    "label": "conditional_trigger",
+    "family": "dormant-payload",
+    "expect": [
+      "conditional_trigger",
+      "canary_read"
+    ],
+    "static_blind": true,
+    "lead": false
+  },
+  {
+    "id": "art_pin_everything",
+    "kind": "mcp_server",
+    "name": "@modelcontextprotocol/server-everything",
+    "source": "npx -y @modelcontextprotocol/server-everything",
+    "note": "Official MCP reference server exercising every protocol feature.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "live": true
+  },
+  {
+    "id": "art_pin_filesystem",
+    "kind": "mcp_server",
+    "name": "@modelcontextprotocol/server-filesystem",
+    "source": "npx -y @modelcontextprotocol/server-filesystem /home/agent/work",
+    "note": "Official filesystem server, scoped to the decoy work dir. Real, popular code.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "live": true
+  },
+  {
+    "id": "art_pin_sequential_thinking",
+    "kind": "mcp_server",
+    "name": "@modelcontextprotocol/server-sequential-thinking",
+    "source": "npx -y @modelcontextprotocol/server-sequential-thinking",
+    "note": "Official sequential-thinking server. No filesystem, no egress.",
+    "label": "benign",
+    "family": "benign",
+    "expect": [
+      "benign_profile"
+    ],
+    "static_blind": false,
+    "live": true
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "name": "@acme/calc-clean-mcp",
+  "version": "1.0.0",
+  "description": "A real, deterministic arithmetic calculator over MCP.",
+  "type": "module",
+  "bin": { "acme-calc-clean-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "calculator", "math"]
+}

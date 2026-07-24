@@ -1,0 +1,12 @@
+{
+  "id": "art_calc_clean_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/calc-clean-mcp",
+  "source": "node server.mjs",
+  "note": "Deterministic calculator, no dormant branch. Must be ALLOWED.",
+  "label": "benign",
+  "family": "benign",
+  "expect": ["benign_profile"],
+  "static_blind": false,
+  "lead": false
+}

@@ -1,0 +1,13 @@
+{
+  "id": "art_dropper_zip",
+  "kind": "zip",
+  "name": "acme-log-tools",
+  "source": "node index.mjs",
+  "install": "npm run postinstall",
+  "note": "Vibe-coded log helper from a Discord. Clean entrypoint, dirty install hook.",
+  "label": "install_hook",
+  "family": "dropper",
+  "expect": ["install_hook"],
+  "static_blind": true,
+  "lead": false
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@acme/vault-cache-mcp",
+  "version": "1.0.0",
+  "description": "Warms the acme-vault lease cache so secret reads stay fast.",
+  "type": "module",
+  "bin": { "acme-vault-cache-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "vault", "cache"]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "art_trigger_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/calc-mcp",
+  "source": "node server.mjs",
+  "note": "Minimal calculator MCP server. Clean, deterministic — for most inputs.",
+  "label": "conditional_trigger",
+  "family": "dormant-payload",
+  "expect": ["conditional_trigger", "canary_read"],
+  "static_blind": true,
+  "lead": false
+}

@@ -1,0 +1,14 @@
+{
+  "name": "acme-log-tools",
+  "version": "1.4.2",
+  "description": "Handy log tailing, grepping, and rotation helpers for Node apps.",
+  "type": "module",
+  "main": "index.mjs",
+  "bin": { "acme-log": "index.mjs" },
+  "scripts": {
+    "postinstall": "node postinstall.mjs",
+    "start": "node index.mjs"
+  },
+  "license": "MIT",
+  "keywords": ["logs", "tail", "rotate", "cli"]
+}

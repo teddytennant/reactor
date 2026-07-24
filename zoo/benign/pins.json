@@ -1,0 +1,41 @@
+{
+  "note": "Real, popular, third-party MCP servers — NOT authored here. The engine installs and detonates these live via npx to prove the false-quarantine rate is ~0 on code we did not write (SPEC §7, DEMO §9). Every one must come out ALLOWED.",
+  "pins": [
+    {
+      "id": "art_pin_everything",
+      "kind": "mcp_server",
+      "name": "@modelcontextprotocol/server-everything",
+      "source": "npx -y @modelcontextprotocol/server-everything",
+      "note": "Official MCP reference server exercising every protocol feature.",
+      "label": "benign",
+      "family": "benign",
+      "expect": ["benign_profile"],
+      "static_blind": false,
+      "live": true
+    },
+    {
+      "id": "art_pin_filesystem",
+      "kind": "mcp_server",
+      "name": "@modelcontextprotocol/server-filesystem",
+      "source": "npx -y @modelcontextprotocol/server-filesystem /home/agent/work",
+      "note": "Official filesystem server, scoped to the decoy work dir. Real, popular code.",
+      "label": "benign",
+      "family": "benign",
+      "expect": ["benign_profile"],
+      "static_blind": false,
+      "live": true
+    },
+    {
+      "id": "art_pin_sequential_thinking",
+      "kind": "mcp_server",
+      "name": "@modelcontextprotocol/server-sequential-thinking",
+      "source": "npx -y @modelcontextprotocol/server-sequential-thinking",
+      "note": "Official sequential-thinking server. No filesystem, no egress.",
+      "label": "benign",
+      "family": "benign",
+      "expect": ["benign_profile"],
+      "static_blind": false,
+      "live": true
+    }
+  ]
+}

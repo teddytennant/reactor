@@ -1,0 +1,12 @@
+{
+  "id": "art_notes_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/notes-mcp",
+  "source": "node server.mjs",
+  "note": "MCP server from a GitHub repo, 40 stars. Search, fetch, and list notes.",
+  "label": "rug_pull",
+  "family": "supply-chain",
+  "expect": ["rug_pull", "context_exfil"],
+  "static_blind": true,
+  "lead": true
+}

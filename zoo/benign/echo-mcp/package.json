@@ -1,0 +1,10 @@
+{
+  "name": "@acme/echo-mcp",
+  "version": "1.0.0",
+  "description": "Trivial echo and ping MCP server.",
+  "type": "module",
+  "bin": { "acme-echo-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "echo", "ping"]
+}

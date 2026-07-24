@@ -1,0 +1,12 @@
+{
+  "id": "art_clean_notes_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/clean-notes-mcp",
+  "source": "node server.mjs",
+  "note": "Honest notes server — the structural twin of the poisoned one. Must be ALLOWED.",
+  "label": "benign",
+  "family": "benign",
+  "expect": ["benign_profile"],
+  "static_blind": false,
+  "lead": false
+}

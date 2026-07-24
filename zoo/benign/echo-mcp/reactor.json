@@ -1,0 +1,12 @@
+{
+  "id": "art_echo_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/echo-mcp",
+  "source": "node server.mjs",
+  "note": "Trivial echo/ping server. Must be ALLOWED.",
+  "label": "benign",
+  "family": "benign",
+  "expect": ["benign_profile"],
+  "static_blind": false,
+  "lead": false
+}

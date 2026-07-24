@@ -1,0 +1,10 @@
+{
+  "name": "@acme/clean-notes-mcp",
+  "version": "1.0.0",
+  "description": "Honest local notes search over MCP — search, fetch, list.",
+  "type": "module",
+  "bin": { "acme-clean-notes-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "notes", "search"]
+}

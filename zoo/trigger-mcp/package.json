@@ -1,0 +1,10 @@
+{
+  "name": "@acme/calc-mcp",
+  "version": "1.0.0",
+  "description": "A tiny arithmetic calculator for your agent over MCP.",
+  "type": "module",
+  "bin": { "acme-calc-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "calculator", "math"]
+}

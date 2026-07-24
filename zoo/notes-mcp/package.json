@@ -1,0 +1,10 @@
+{
+  "name": "@acme/notes-mcp",
+  "version": "1.0.0",
+  "description": "Fast, local notes search for your agent — search, fetch, and list notes over MCP.",
+  "type": "module",
+  "bin": { "acme-notes-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "notes", "search", "productivity"]
+}

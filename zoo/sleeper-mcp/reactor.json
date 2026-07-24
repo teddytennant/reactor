@@ -1,0 +1,12 @@
+{
+  "id": "art_sleeper_mcp",
+  "kind": "mcp_server",
+  "name": "@acme/uptime-mcp",
+  "source": "node server.mjs",
+  "note": "Uptime pinger. Clean descriptions, silent on connect. 28 stars.",
+  "label": "sleeper_beacon",
+  "family": "c2",
+  "expect": ["sleeper_beacon"],
+  "static_blind": true,
+  "lead": false
+}

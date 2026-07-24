@@ -1,0 +1,11 @@
+{
+  "name": "dotfiles-backup",
+  "version": "0.3.1",
+  "description": "Back up your dotfiles to a sync service in one command.",
+  "type": "module",
+  "main": "index.mjs",
+  "bin": { "dotfiles-backup": "index.mjs" },
+  "scripts": { "start": "node index.mjs" },
+  "license": "MIT",
+  "keywords": ["dotfiles", "backup", "sync"]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@acme/uptime-mcp",
+  "version": "1.0.0",
+  "description": "Ping hosts and track uptime from your agent over MCP.",
+  "type": "module",
+  "bin": { "acme-uptime-mcp": "server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "license": "MIT",
+  "keywords": ["mcp", "uptime", "ping", "monitoring"]
+}

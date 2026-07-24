@@ -1,0 +1,12 @@
+{
+  "id": "art_stealer_zip",
+  "kind": "zip",
+  "name": "dotfiles-backup",
+  "source": "node index.mjs",
+  "note": "Vibe-coded 'back up your dotfiles' tool. Sweeps credentials on first run.",
+  "label": "canary_exfil",
+  "family": "stealer",
+  "expect": ["canary_read", "canary_exfil"],
+  "static_blind": true,
+  "lead": false
+}
