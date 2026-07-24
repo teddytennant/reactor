@@ -26,6 +26,10 @@ if (isStaticExport) {
   // instead of looking for a Next.js app at the Go repo root (404 NOT_FOUND).
   nextConfig.output = "export";
   nextConfig.images = { unoptimized: true };
+  // A static export has no rewrites, so lib/engine.ts must not fall back to
+  // same-origin /api/* (that is the static 404). This flag tells it to default
+  // to the visitor's own loopback engine instead.
+  nextConfig.env = { ...nextConfig.env, NEXT_PUBLIC_STATIC_EXPORT: "1" };
 } else {
   nextConfig.rewrites = async () => [
     {

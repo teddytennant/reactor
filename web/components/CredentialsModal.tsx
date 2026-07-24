@@ -13,6 +13,7 @@ import {
   saveCredentials,
   type Credentials,
 } from "@/lib/credentials";
+import { DEFAULT_LOCAL_ENGINE, engineOrigin, setEngineOrigin } from "@/lib/engine";
 
 type Mode = "onboarding" | "settings";
 
@@ -32,12 +33,14 @@ export interface CredentialsModalProps {
 export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsModalProps) {
   const titleId = useId();
   const [draft, setDraft] = useState<Credentials>(EMPTY_CREDENTIALS);
+  const [engineDraft, setEngineDraft] = useState("");
   const [showKeys, setShowKeys] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setDraft(loadCredentials());
+    setEngineDraft(engineOrigin());
     setShowKeys(false);
     setSavedFlash(false);
   }, [open]);
@@ -57,6 +60,9 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
 
   const commit = (next: Credentials, done: boolean) => {
     saveCredentials(next);
+    // Blank means "use the default" rather than "use same-origin", which for a
+    // deployed static export would be the 404 page.
+    setEngineOrigin(engineDraft.trim() || DEFAULT_LOCAL_ENGINE);
     if (done) markOnboardingDone();
     onChange?.(next);
   };
@@ -202,10 +208,35 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
             Show keys
           </label>
 
-          <p className="border-t border-line pt-4 text-sm leading-relaxed text-faint">
-            Without keys you can still explore the bundled replay demo. Live detonation needs a
-            reachable engine; with no Fireworks key the engine falls back to the sim victim and
-            deterministic analyst.
+          <div className="border-t border-line pt-4">
+            <Field
+              label="Engine URL"
+              hint="Your own machine — nothing is hosted"
+              htmlFor="cred-engine-url"
+            >
+              <input
+                id="cred-engine-url"
+                type="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={DEFAULT_LOCAL_ENGINE}
+                value={engineDraft}
+                onChange={(e) => setEngineDraft(e.target.value)}
+                className="field-input font-mono text-sm"
+              />
+            </Field>
+            <p className="mt-2 text-sm leading-relaxed text-faint">
+              Reactor detonates in disposable sandboxes and streams evidence for minutes at a
+              time, so the engine runs on your machine, not ours. Clone the repo and start it:
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-surface-2 px-3 py-2 font-mono text-xs text-muted">
+              make build &amp;&amp; ./bin/reactor serve
+            </pre>
+          </div>
+
+          <p className="text-sm leading-relaxed text-faint">
+            Without an engine you can still explore the bundled replay demo. With no Fireworks key
+            the engine falls back to the sim victim and deterministic analyst.
           </p>
         </div>
 

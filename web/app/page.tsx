@@ -26,6 +26,7 @@ import {
   type Credentials,
 } from "@/lib/credentials";
 import { cn } from "@/lib/cn";
+import { unreachableReason } from "@/lib/engine";
 import { TopBar } from "@/components/TopBar";
 import { CredentialsModal } from "@/components/CredentialsModal";
 import { ArtifactPicker } from "@/components/console/ArtifactPicker";
@@ -357,11 +358,52 @@ function ModeNote({ mode, className }: { mode: Mode; className?: string }) {
   }
   return (
     <span
-      title="Engine unreachable — playing the bundled money-shot fixture through the same render path."
+      title="No engine reached — playing a bundled recording of a real detonation through the same render path."
       className={cn("text-sm text-muted", className)}
     >
       Bundled replay
     </span>
+  );
+}
+
+/**
+ * Shown when the probe found no engine. The cause is diagnosed after the fact
+ * from what actually failed (lib/engine.ts), never predicted from a browser
+ * allowlist — WebKit is the one engine we can name with certainty.
+ */
+function ReplayNotice({ className }: { className?: string }) {
+  const [reason, setReason] = useState<"webkit" | "mixed-content" | "no-engine">("no-engine");
+  useEffect(() => setReason(unreachableReason()), []);
+
+  return (
+    <div className={cn("rounded-xl border border-line bg-surface-2/60 px-4 py-3", className)}>
+      <p className="text-sm font-medium text-fg">
+        {reason === "webkit"
+          ? "Safari can only show the replay"
+          : "Running the bundled replay"}
+      </p>
+      <p className="mt-1.5 text-sm leading-relaxed text-muted">
+        {reason === "webkit" ? (
+          <>
+            Safari blocks this page from reaching an engine on your own machine, so live
+            detonation is not possible here. Everything below is a recording of a real run.{" "}
+            <span className="text-fg">
+              To detonate your own files with your own keys, open this in Chrome, Edge, or Brave.
+            </span>
+          </>
+        ) : (
+          <>
+            No engine answered, so this is a recording of a real run. To detonate your own files
+            with your own keys, clone the repo, run{" "}
+            <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-xs">
+              make build &amp;&amp; ./bin/reactor serve
+            </code>
+            , then reload. Chrome, Edge and Brave can reach a local engine from this page; Safari
+            cannot, and other browsers vary.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 
@@ -422,6 +464,8 @@ function PickerPanel({
             watches it behave.
           </p>
         </div>
+
+        {mode === "replay" && <ReplayNotice className="max-w-3xl" />}
 
         <ArtifactIntake
           mode={mode}

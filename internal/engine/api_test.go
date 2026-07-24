@@ -331,3 +331,43 @@ func parseSSE(t *testing.T, raw string) []sseFrame {
 	}
 	return out
 }
+
+// Private Network Access: the deployed console lives on a public https origin
+// and talks to the visitor's own engine on 127.0.0.1. Chromium blocks that
+// before it leaves the browser unless the preflight is granted explicitly, so
+// this header is the difference between "works" and "engine unreachable".
+func TestCORSGrantsPrivateNetworkAccessOnlyWhenAsked(t *testing.T) {
+	e := newTestEngine(t)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/detonate", nil)
+	req.Header.Set("Origin", "https://reactor.teddytennant.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Private-Network", "true")
+	rec := httptest.NewRecorder()
+	e.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight status %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
+		t.Errorf("Access-Control-Allow-Private-Network = %q, want true — Chromium will block the visitor's own engine without it", got)
+	}
+	// The BYOK upload path sends its keys as headers, so those must be allowed
+	// or the preflight fails before any credential reaches the engine.
+	allowed := rec.Header().Get("Access-Control-Allow-Headers")
+	for _, h := range []string{"X-Reactor-Daytona-Key", "X-Reactor-Fireworks-Key"} {
+		if !strings.Contains(allowed, h) {
+			t.Errorf("preflight does not allow %s (got %q)", h, allowed)
+		}
+	}
+
+	// Not asked for => not granted. The header is a specific grant, not decoration.
+	plain := httptest.NewRequest(http.MethodOptions, "/api/detonate", nil)
+	plain.Header.Set("Origin", "https://example.com")
+	plain.Header.Set("Access-Control-Request-Method", "POST")
+	rec2 := httptest.NewRecorder()
+	e.Handler().ServeHTTP(rec2, plain)
+	if got := rec2.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("granted private-network access without a request for it: %q", got)
+	}
+}

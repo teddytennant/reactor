@@ -19,3 +19,9 @@ web/tsconfig.tsbuildinfo
 
 # Next static export (Vercel publishes this dir; never commit it)
 web/out/
+.vercel
+.env*
+
+# Python bytecode from the eval harness
+__pycache__/
+*.pyc
