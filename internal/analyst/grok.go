@@ -195,7 +195,7 @@ func parseVerdict(args map[string]any, in Input) (events.Verdict, error) {
 	v.Evidence = strSlice(args["evidence"])
 
 	valid := knownIDs(in)
-	var kept []string
+	kept := []string{} // an ALLOWED verdict keeps none, and still ships []
 	for _, e := range v.Evidence {
 		if valid[e] {
 			kept = append(kept, e)

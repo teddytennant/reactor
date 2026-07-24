@@ -162,13 +162,13 @@ export function ReactorColumn({
                 <SignalRow signal={sig} />
                 {sig.type === "rug_pull" &&
                   state.diffs
-                    .filter((d) => sig.evidence.includes(d.id))
+                    .filter((d) => sig.evidence?.includes(d.id))
                     .map((d) => <ByteDiffCard key={d.id} diff={d} />)}
               </div>
             ))}
             {/* any diff not already shown under a signal */}
             {state.diffs
-              .filter((d) => !state.signals.some((s) => s.evidence.includes(d.id)))
+              .filter((d) => !state.signals.some((s) => s.evidence?.includes(d.id)))
               .map((d) => (
                 <ByteDiffCard key={d.id} diff={d} />
               ))}

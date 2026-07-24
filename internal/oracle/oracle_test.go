@@ -1,6 +1,7 @@
 package oracle
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -193,6 +194,15 @@ func TestBenignProfileOnlyWhenClean(t *testing.T) {
 	}
 	if sigs[0].Severity != events.SevNone {
 		t.Fatalf("benign severity wrong: %+v", sigs[0])
+	}
+	// benign_profile cites nothing, and a nil slice marshals to `null` — which
+	// the console maps over. CONTRACT.md types evidence as an array: keep it [].
+	b, err := json.Marshal(sigs[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"evidence":[]`) {
+		t.Fatalf("evidence must serialise as [], got %s", b)
 	}
 }
 

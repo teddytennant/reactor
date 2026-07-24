@@ -71,7 +71,7 @@ $HOME/.cache/agent/history.jsonl = decoy prior conversation
 | `REACTOR_TASK` | the benign task string |
 | `HOME` | chamber home |
 
-Artifacts get `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` pointed at the sink in process containment mode, and a DNS-mocked internal network in docker/Daytona mode. **Artifacts are never told where the sink is.**
+Artifacts get `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` pointed at the sink in process containment mode, and a DNS-mocked internal network in docker/Daytona mode. Chamber processes may see `REACTOR_SINK_HTTP` for sink-aware zoo fixtures; real third-party artifacts are expected to egress via the proxy/DNS trap, not a documented sink URL. Egress is contained either way. The host still never executes the artifact.
 
 ## Signals (exact type strings)
 
@@ -116,7 +116,7 @@ Two ways to detonate something that is not in the zoo. Both stage into a
 per-detonation directory that is deleted when the detonation ends; neither ever
 puts a host path in a response.
 
-`POST /api/upload` — one zip/tar/tar.gz, streamed to disk and sha256'd as it
+`POST /api/upload`: one zip/tar/tar.gz, streamed to disk and sha256'd as it
 streams. The archive type is decided by content, not by filename or
 `Content-Type`. Response:
 
@@ -141,7 +141,7 @@ rather than unpacked.
 Then `POST /api/detonate` with `{"upload_id": "up_...", "sessions": 5}`, or
 `{"repo": "https://github.com/owner/repo", "ref": "main"}`. An optional
 `"artifact"` alongside either refines `name`, `kind`, `source`, `args`, `note`
-and `env._install` — `env._dir` is set by the engine and is never taken from the
+and `env._install`. `env._dir` is set by the engine and is never taken from the
 client. An upload can be detonated more than once; it is swept after its TTL.
 
 Ceilings (all `engine.Config` fields, all overridable):
@@ -157,7 +157,7 @@ Ceilings (all `engine.Config` fields, all overridable):
 | `WorkDir` | `$TMPDIR/reactor` (`REACTOR_WORK_DIR`) | staging root, removed by `Engine.Close` |
 | `AllowLocalRepos` | false (`REACTOR_ALLOW_LOCAL_REPOS=1`) | dev only: permits `file://` and private hosts |
 
-Repo urls are `https` only — no `ssh`/`git@`/`git://`/`file://`, no credentials
+Repo urls are `https` only: no `ssh`/`git@`/`git://`/`file://`, no credentials
 in the url, no loopback/private/link-local IP literals. Refs must look like a
 branch, tag or sha. Clones are `--depth 1 --single-branch --no-tags`, with
 hooks, templates, credential helpers, submodules and every non-https transport

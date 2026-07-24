@@ -98,7 +98,7 @@ export function FindingsDeck({
           <Finding
             key={sig.id}
             signal={sig}
-            diff={diffs.find((d) => sig.evidence.includes(d.id))}
+            diff={diffs.find((d) => sig.evidence?.includes(d.id))}
           />
         ))}
       </div>

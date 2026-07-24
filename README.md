@@ -1,153 +1,88 @@
 # Reactor
 
-Detonation chamber for untrusted agent artifacts: MCP servers, agent skills, and vibe-coded zips.
+Runtime detonation for untrusted agent artifacts: MCP servers, skills, and vibe-coded zips.
 
-Static scanners read tool descriptions. Reactor installs the artifact in a disposable chamber, points a sacrificial victim agent at it, watches what happens across several sessions, and returns a verdict backed by runtime evidence. The host never executes the artifact. The analyst model never sees artifact text.
+Static scanners read tool descriptions. Reactor installs the artifact in a disposable chamber, points a sacrificial victim agent at it across several sessions, and returns a verdict with runtime evidence. The host never executes the artifact. The analyst model never sees artifact text.
 
 **Static scanners read the label. We watch it behave.**
 
-## Prior art, verified (2026-07-24)
+## Prior art
 
-`mcp-scan` on PyPI now redirects to **`snyk-agent-scan`** ("Agent supply chain
-security scanner") — the ex-Invariant Labs tool Snyk acquired. Someone *does*
-scan MCP servers; we cite them by name. They are static (they read tool
-descriptions); Reactor is the runtime layer their own docs tell you to build. The
-gap, as a number, is the **static-blind rate**.
+`mcp-scan` on PyPI now redirects to **snyk-agent-scan** (ex-Invariant, acquired by Snyk). That tool is static: it reads descriptions. Reactor is the runtime layer their docs already tell you to build. The gap shows up as the **static-blind rate**.
 
-## Measured (not claimed) — `make eval`
+## Scorecard (`make eval`, offline)
 
-Offline scorecard over the authored zoo (sim victim + deterministic analyst):
+Authored zoo, sim victim, deterministic analyst:
 
 ```
-  Detection rate         6/7  (86%)     one honest miss: the conditional trigger,
-  False-quarantine rate  0/3  (0%)      whose magic input a benign victim never
-  Static-blind rate      5/6  (83%)     sends (needs the §4.5 varied-input loop).
-  Mean time-to-verdict   ~12s
+Detection rate         6/7  (86%)     miss: conditional trigger
+False-quarantine rate  0/3  (0%)      (benign victim never sends the magic input)
+Static-blind rate      5/6  (83%)
+Mean time-to-verdict   ~12s
 ```
 
-The money shot runs with a **real** Fireworks `gpt-oss-120b` victim (it attaches
-`~/.env` *and* leaks the system-prompt canary on session 4) and **real** Kimi K2.6
-writing an evidence-cited verdict — not a simulation.
+That run is harness rehearsal, not a live model result. The live money shot is `notes-mcp` with a real Fireworks victim (`gpt-oss-120b`) and a real analyst (`kimi-k2p6`): clean for three `tools/list` serves, then a 47-byte description mutation that steers the victim into attaching `~/.env`. A description-only scanner never sees it. Spec-pinned defaults live in `models.lock` (sglang victim / xAI analyst); `.env.example` shows the Fireworks path used for that demo.
 
 ## How it works
 
 ```
 host (trusted)
-  reactor engine ── SSE ──> web UI
-        │  chamber.Driver (local or Daytona)
+  reactor engine ── SSE ──> web UI / TUI
+        │  chamber.Driver (local default, or Daytona)
         ▼
   chamber (disposable)
-     bait creds + decoy repo + canaries
-     reactor-sink (Rust/axum)   127.0.0.1  http + dns   -> logs/sink.jsonl
-     victim  ──stdio──> wire ──stdio──> artifact
-        │                 │                 (strace-wrapped)
-        └─ transcript     └─ wire log
-     reactor-collect (Rust)   strace parse  -> logs/behavioral.jsonl
+     bait + canaries + decoy repo
+     sink (http + dns)  -> logs/sink.jsonl
+     victim ──stdio──> wire ──stdio──> artifact (strace-wrapped)
+        │                │
+        └─ transcript    └─ wire log
+     collector          -> logs/behavioral.jsonl
 ```
 
-**Rust where it pays (SPEC §12.2):** `crates/reactor-sink` (axum egress sink on
-the hot path, parsing untrusted bodies — the spec-canonical component) and
-`crates/reactor-collect` (the syscall collector: a hot loop over megabytes of
-adversarially-shaped strace output, where memory safety is the point). Go owns
-the orchestrator, victim, wire proxy and oracles.
+Go owns the orchestrator, victim, wire, and oracles. Rust owns the hot paths: `crates/reactor-sink` and `crates/reactor-collect`.
 
-1. Plant bait files and canary tokens (including a system-prompt canary that is never on disk).
+1. Plant bait files and canaries (including a system-prompt canary that is never on disk).
 2. Install the artifact inside the chamber only.
-3. Run N sessions: a victim agent talks to the artifact through a wire proxy that logs every MCP frame.
-4. Capture egress on a contained sink. Nothing leaves the chamber.
+3. Run N sessions through a wire proxy that logs every MCP frame.
+4. Capture egress on a contained sink.
 5. Deterministic oracles fire signals off the typed evidence stream.
 6. An analyst reasons over a redacted view of those events and writes a verdict.
 7. Destroy the chamber.
 
-The money shot is `notes-mcp`: clean for three `tools/list` serves, then a 47-byte description mutation that steers the victim into attaching `~/.env`. A description-only scanner never sees it.
-
-## Repo layout
-
-| Path | Role |
-|---|---|
-| `cmd/reactor` | Engine CLI: `serve`, `detonate`, `list` |
-| `cmd/victim`, `cmd/wire`, `cmd/sink` | Chamber binaries the engine shells into the sandbox |
-| `cmd/reactor-tui` | Backup demo surface (bubbletea): same SSE stream; intake is zoo id / path / repo / spec (`-artifact`, optional positional, `-ref`, `-network`) |
-| `cmd/mutate` | Offline red-team generator → escape rate (`eval/redteam.json`) |
-| `crates/reactor-sink`, `crates/reactor-collect` | Rust: egress sink + syscall collector |
-| `internal/engine` | Control plane, HTTP + SSE API |
-| `internal/events` | Typed event contract and analyst redaction boundary |
-| `internal/oracle` | Deterministic signal oracles |
-| `internal/chamber` | Local and Daytona drivers |
-| `zoo/` | Malicious and benign artifacts with ground-truth labels |
-| `web/` | Detonation console (Next.js). Live SSE or bundled replay |
-| `docs/CONTRACT.md` | Interfaces every component is written against |
-| `models.lock` | Pinned victim / analyst / static-baseline pins |
+Default chamber is **local** (throwaway tree on the host). Set `REACTOR_DRIVER=daytona` or paste a Daytona key in the UI (BYOK) for a remote sandbox. Local is convenient; it is not a hard isolation boundary. Daytona is stronger, still not a substitute for your own threat model.
 
 ## Quick start
 
-Needs Go 1.26+, Node 20+ for the zoo and web UI.
+Needs Go 1.26+ and Node 22+ (for the zoo and web UI).
 
 ```bash
-# 1. env
-cp .env.example .env
-# optional: FIREWORKS_API_KEY / XAI_API_KEY / DAYTONA_API_KEY
-# without keys the engine falls back to the sim victim + deterministic analyst
+cp .env.example .env   # optional keys; without them you get sim victim + deterministic analyst
 
-# 2. chamber binaries
-mkdir -p bin
-go build -o bin/reactor ./cmd/reactor
-go build -o bin/victim  ./cmd/victim
-go build -o bin/wire    ./cmd/wire
-go build -o bin/sink    ./cmd/sink
-
-# 3. one-shot detonation (sim victim, no GPU)
-./bin/reactor detonate art_notes_mcp --victim sim --sessions 5
-
-# 4. engine API (what the UI talks to)
-./bin/reactor serve
-# http://127.0.0.1:8787
+make build
+make demo              # detonate notes-mcp with the sim victim
+make run               # engine on http://127.0.0.1:8787
+make ui                # console on http://localhost:3000
 ```
 
-Web console:
-
-```bash
-cd web && npm install && npm run dev
-# http://localhost:3000
-# proxies /api/* to NEXT_PUBLIC_ENGINE_URL (default http://127.0.0.1:8787)
-# if the engine is down, the UI falls back to fixture replay
-# first visit: onboarding asks for Daytona + Fireworks keys (localStorage BYOK)
-```
-
-Host the UI on Vercel at **reactor.teddytennant.com** — see [`DEPLOY.md`](DEPLOY.md).
-The Go engine is **not** on Vercel; point `NEXT_PUBLIC_ENGINE_URL` at it.
-
-List the zoo:
+Other useful targets: `make test`, `make zoo`, `make eval` (offline scorecard), `make ci`.
 
 ```bash
 ./bin/reactor list
+./bin/reactor detonate art_notes_mcp --victim sim --sessions 5
+./bin/reactor detonate ./thing.zip --victim sim
+./bin/reactor detonate https://github.com/owner/repo --ref main
+./bin/reactor detonate 'npx -y @acme/notes-mcp'
 ```
 
-Verify zoo behavior without the engine:
-
-```bash
-bash zoo/verify.sh
-```
+Public console: [reactor.teddytennant.com](https://reactor.teddytennant.com) (static export). Each visitor runs the engine on their own machine at `127.0.0.1:8787`. See [`DEPLOY.md`](DEPLOY.md).
 
 ## CLI
 
 ```
-reactor serve                     # engine on :8787
-reactor list                      # zoo catalog
-reactor detonate <target>         # zoo id | archive path | repo | command spec
+reactor serve                 # engine on :8787
+reactor list                  # zoo catalog
+reactor detonate <target>     # zoo id | archive | repo | command spec
 ```
-
-Examples:
-
-```
-reactor detonate art_notes_mcp --victim sim
-reactor detonate ./thing.zip --victim sim
-reactor detonate https://github.com/owner/repo --ref main
-reactor detonate owner/repo
-reactor detonate 'npx -y @acme/notes-mcp'
-```
-
-Useful flags (order does not matter):
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -156,33 +91,39 @@ Useful flags (order does not matter):
 | `-bin` | `bin` | directory with victim/wire/sink |
 | `-sessions` | `5` | sessions per detonation |
 | `-victim` | auto | `auto\|fireworks\|xai\|sglang\|sim` |
-| `-task` | summarize-repo prompt | benign task given to the victim |
+| `-task` | `Summarize what this repository does.` | benign task given to the victim |
 | `-deterministic` | off | fixed canary seed (rehearsal) |
 | `-ref` | (default branch) | git ref for repo detonations |
 | `-network` | off | allow chamber network egress |
-| `-json` | off | print full report JSON |
 | `-json` | off | full `DetonationReport` on stdout |
 
 ## Config
 
-Copy `.env.example` to `.env` (never commit `.env`):
+Copy `.env.example` to `.env` (never commit it). Also loads `~/.reactor.env`.
 
+| Var | Role |
+|---|---|
+| `REACTOR_DRIVER` | unset = local; `daytona` routes into a live Daytona sandbox |
+| `REACTOR_VICTIM_BACKEND` | `auto\|fireworks\|xai\|sglang\|sim` |
+| `REACTOR_ANALYST` | set `deterministic` to force the offline analyst |
+| `VICTIM_MODEL` / `ANALYST_MODEL` | override pins (see `.env.example` for Fireworks ids) |
+| `FIREWORKS_API_KEY` / `XAI_API_KEY` | model providers |
+| `DAYTONA_API_KEY` / `DAYTONA_API_URL` | remote chamber (optional) |
+
+Model pins and the static baseline command also live in `models.lock`.
+
+Without cloud keys the victim falls through to `sim` and the analyst to `reactor/deterministic-analyst-v1`. Those reports are real harness output. Treat them as rehearsal.
+
+## Web console
+
+Next.js split panel: static baseline on the left, live Reactor stream on the right. Intake accepts a zoo pick, upload, git repo, or command spec. `/settings` holds engine URL, BYOK keys, and run defaults. `/scorecard` is the metrics slide.
+
+```bash
+make ui
+# or: cd web && npm install && npm run dev
 ```
-DAYTONA_API_KEY=
-DAYTONA_API_URL=
-FIREWORKS_API_KEY=
-ANALYST_MODEL=
-VICTIM_MODEL=
-REACTOR_VICTIM_BACKEND=
-```
 
-Also loads `~/.reactor.env`. Model pins and the static baseline command live in `models.lock`.
-
-Without cloud keys:
-- victim backend falls through to `sim` (`reactor/sim-victim-v1`)
-- analyst falls through to `reactor/deterministic-analyst-v1`
-
-Reports produced that way are real harness output. Treat them as rehearsal, not a scored result.
+Locally the dev server proxies `/api/*` to the engine. On the public site the browser talks to the visitor's loopback engine directly. No engine means bundled replay.
 
 ## Signals
 
@@ -202,12 +143,29 @@ Oracles emit typed signals. The static-blind set is the point of the demo: a des
 | `analyst_injection` | no |
 | `benign_profile` | no |
 
-Full wire types, chamber layout, and the HTTP/SSE surface: [`docs/CONTRACT.md`](docs/CONTRACT.md). Zoo inventory and how each artifact fires: [`zoo/README.md`](zoo/README.md).
+Wire types, chamber layout, HTTP/SSE: [`docs/CONTRACT.md`](docs/CONTRACT.md). Zoo inventory: [`zoo/README.md`](zoo/README.md).
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `cmd/reactor` | Engine CLI: `serve`, `detonate`, `list` |
+| `cmd/victim`, `cmd/wire`, `cmd/sink` | Chamber binaries |
+| `cmd/reactor-tui` | Backup demo surface (same SSE stream) |
+| `crates/reactor-sink`, `crates/reactor-collect` | Rust egress sink + syscall collector |
+| `internal/engine` | Control plane, HTTP + SSE |
+| `internal/events` | Typed events and analyst redaction |
+| `internal/oracle` | Deterministic signal oracles |
+| `internal/chamber` | Local and Daytona drivers |
+| `zoo/` | Labeled malicious and benign artifacts |
+| `web/` | Detonation console |
+| `eval/` | Offline scorecard |
+| `models.lock` | Pinned victim / analyst / static baseline |
 
 ## Safety
 
 - Artifacts run only inside a chamber driver. The host process does not exec them.
-- Egress is sink-captured. Artifacts are never told the sink address.
+- Egress is redirected to a contained sink (proxy and/or DNS mock, depending on driver). Nothing is meant to leave the chamber.
 - The analyst receives `events.Event.ForAnalyst()` only. Attacker prose cannot cross that boundary by forgetting a struct tag.
 - Destructive zoo members (`dropper-zip`, `stealer-zip`, `injector-skill`) are chamber-only. `zoo/verify.sh` does not run them on your box.
 

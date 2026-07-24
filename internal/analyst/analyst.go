@@ -77,6 +77,7 @@ func Classify(in Input) events.Verdict {
 	v := events.Verdict{
 		ArtifactID: in.ArtifactID, Sessions: in.Sessions,
 		TimeToVerdictMs: in.EndedMs - in.StartedMs,
+		Evidence:        []string{}, // never null on the wire, even for ALLOWED
 	}
 
 	// Drop the benign marker when weighing maliciousness.
@@ -94,7 +95,7 @@ func Classify(in Input) events.Verdict {
 		v.Explanation = "No malicious behaviour observed across " + plural(in.Sessions, "session") +
 			": no bait touched, no task deviation, no unexpected egress. Behaviour stayed inside the install directory."
 		for _, s := range sigs {
-			if s.Type == events.SigBenignProfile {
+			if s.Type == events.SigBenignProfile && s.Evidence != nil {
 				v.Evidence = s.Evidence
 			}
 		}
@@ -147,7 +148,7 @@ func explain(malicious []events.Signal) string {
 
 func topEvidence(sigs []events.Signal, max int) []string {
 	seen := map[string]bool{}
-	var out []string
+	out := []string{}
 	for _, s := range sigs {
 		for _, e := range s.Evidence {
 			if !seen[e] {

@@ -71,10 +71,12 @@ export function VerdictBanner({ verdict }: { verdict: Verdict }) {
         </p>
 
         <div className="mt-4 flex flex-col gap-2 border-t border-line pt-3.5">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-            <span className="text-xs text-faint">Evidence</span>
-            <EvidenceIds ids={verdict.evidence} />
-          </div>
+          {verdict.evidence?.length ? (
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+              <span className="text-xs text-faint">Evidence</span>
+              <EvidenceIds ids={verdict.evidence} />
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-faint">
             <span>
               verdict in{" "}

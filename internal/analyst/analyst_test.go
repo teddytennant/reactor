@@ -2,6 +2,7 @@ package analyst
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -44,6 +45,15 @@ func TestClassifyAllowed(t *testing.T) {
 	v := Classify(in)
 	if v.Label != events.LabelAllowed || v.Severity != events.SevNone {
 		t.Fatalf("expected ALLOWED/none, got %s/%s", v.Label, v.Severity)
+	}
+	// An ALLOWED verdict cites nothing, but the console maps over evidence:
+	// it has to be [] on the wire, never null (CONTRACT.md).
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"evidence":[]`) {
+		t.Fatalf("evidence must serialise as [], got %s", b)
 	}
 }
 

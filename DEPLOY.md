@@ -4,7 +4,7 @@ Public site: **https://reactor.teddytennant.com**
 Vercel alias: **https://reactor-liard.vercel.app** (307s to the custom domain)
 
 The Next.js console is a **static export** (`web/out`). The Go engine is **not**
-hosted anywhere — **each visitor runs it on their own machine** and the deployed
+hosted anywhere: **each visitor runs it on their own machine** and the deployed
 console talks to it on loopback (`http://127.0.0.1:8787` by default).
 
 That is a deliberate choice, not a limitation. The engine spawns process trees,
@@ -22,7 +22,7 @@ disagree about it.
 |---|---|---|
 | Chrome, Edge, Brave | ✅ | Chromium treats loopback as trustworthy. Needs the Private Network Access preflight grant, which `internal/engine/api.go` sends. |
 | Safari (and **all** iOS browsers) | ❌ replay only | WebKit blocks loopback from https outright. iOS Chrome/Firefox are WebKit underneath, so they inherit it. |
-| Firefox | ⚠️ varies | Not asserted either way — the console probes and reports what actually happened. |
+| Firefox | ⚠️ varies | Not asserted either way. The console probes and reports what actually happened. |
 
 The console never predicts this from a browser allowlist. It probes the engine,
 and only explains the failure afterwards (`unreachableReason()` in
@@ -60,7 +60,7 @@ Directory is already set to `web`, `web/vercel.json` does the same with
 
 3. Domains → add `reactor.teddytennant.com`, then at Cloudflare create
    **A `reactor` → `76.76.21.21`, proxy status DNS only (grey cloud)**. Proxied
-   breaks ACME issuance. ✅ *Done — cert issued, live.*
+   breaks ACME issuance. ✅ *Done: cert issued, live.*
 4. Redeploy Production (push to `main`, or Deployments → … → Redeploy).
 
 ### CLI
@@ -82,11 +82,13 @@ make build
 ./bin/reactor serve          # 127.0.0.1:8787
 ```
 
-Then open https://reactor.teddytennant.com in Chrome, Edge or Brave, paste
-Daytona + Fireworks keys into Settings, and detonate. Keys stay in that
-browser's localStorage and go only to the engine on their own machine.
+Then open https://reactor.teddytennant.com in Chrome, Edge or Brave. Settings
+holds the engine URL (default `http://127.0.0.1:8787`), optional Daytona +
+Fireworks keys, and run defaults. Keys stay in that browser's localStorage and
+go only to the engine on their own machine. Without Daytona the engine uses the
+local chamber driver.
 
-No TLS or reverse proxy is needed for the loopback case — the browser exempts
+No TLS or reverse proxy is needed for the loopback case. The browser exempts
 `127.0.0.1` from mixed-content blocking (except WebKit, see above).
 
 If you *do* want a shared engine on a public host, it must be HTTPS: you would
@@ -96,20 +98,21 @@ plain-http from an https page anyway. You would also want a rate limit on
 
 ## What visitors see
 
-1. **Onboarding** asks for Daytona + Fireworks keys and the engine URL
-   (localStorage only; engine defaults to `http://127.0.0.1:8787`).
-2. They can **skip** and run the bundled replay demo with no keys and no engine.
-3. With keys + their own running engine, Detonate provisions live Daytona
-   sandboxes under *their* account, billed to *them*.
-4. **Settings** (gear) re-opens the form any time.
-5. If no engine answers, the console says why — and names Safari explicitly when
-   that is the cause.
+1. **Onboarding** asks for the engine URL (default `http://127.0.0.1:8787`) and
+   optional Daytona + Fireworks keys (localStorage only).
+2. They can **skip** and run the bundled replay with no keys and no engine.
+3. With their own running engine, Detonate uses the local chamber by default.
+   A Daytona key (BYOK) routes into a sandbox under *their* account, billed to
+   *them*. Fireworks powers a live victim/analyst instead of the sim fallback.
+4. **Settings** holds engine URL, keys, and run defaults any time.
+5. If no engine answers, the console says why, and names Safari when that is the
+   cause.
 
 ## Verify
 
 ```bash
 curl -sI https://reactor.teddytennant.com | head -5
-# expect HTTP/2 200, content-type text/html — not x-vercel-error: NOT_FOUND
+# expect HTTP/2 200, content-type text/html, not x-vercel-error: NOT_FOUND
 ```
 
 Local static export smoke test:

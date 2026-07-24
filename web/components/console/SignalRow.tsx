@@ -93,10 +93,12 @@ export function SignalRow({ signal }: { signal: SignalView }) {
             {signal.summary}
           </p>
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-            <span className="text-xs text-faint">Evidence</span>
-            <EvidenceIds ids={signal.evidence} />
-          </div>
+          {signal.evidence?.length ? (
+            <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+              <span className="text-xs text-faint">Evidence</span>
+              <EvidenceIds ids={signal.evidence} />
+            </div>
+          ) : null}
         </div>
       </div>
     </article>

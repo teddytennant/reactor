@@ -131,6 +131,11 @@ func dedupe(sigs []events.Signal) []events.Signal {
 }
 
 func sig(t, family, sev, summary string, firstMs int64, evidence ...string) events.Signal {
+	if evidence == nil {
+		// CONTRACT.md types evidence as an array; a signal that cites nothing
+		// (benign_profile) must still serialise as [], never null.
+		evidence = []string{}
+	}
 	return events.Signal{
 		Type: t, Family: family, Severity: sev, Summary: summary,
 		Evidence: evidence, StaticBlind: StaticBlind[t], FirstSeenMs: firstMs,

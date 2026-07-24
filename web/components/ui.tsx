@@ -148,9 +148,23 @@ export function StaticBlindBadge() {
   );
 }
 
-/** Evidence event-id pills (wire:4:tools/list, egress:7, …). Machine data. */
-export function EvidenceIds({ ids, tone = "neutral" }: { ids: string[]; tone?: UiTone }) {
+/**
+ * Evidence event-id pills (wire:4:tools/list, egress:7, …). Machine data.
+ *
+ * `ids` is nullable on purpose: a benign_profile signal or an ALLOWED verdict
+ * cites nothing, and an engine that serialises that as `null` must not take the
+ * console down. Nothing to cite renders as nothing — the caller's "Evidence"
+ * label is hidden alongside it (see SignalRow / VerdictBanner).
+ */
+export function EvidenceIds({
+  ids,
+  tone = "neutral",
+}: {
+  ids?: string[] | null;
+  tone?: UiTone;
+}) {
   const t = toneClasses[tone];
+  if (!ids?.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {ids.map((id) => (
