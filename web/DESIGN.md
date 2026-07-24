@@ -126,6 +126,20 @@ sweeps, uppercase-mono chrome labels.
 
 - Console fills the viewport; the two columns scroll independently, headers
   sticky within their column. No page-level double scrollbar.
+- **The Reactor column pins its catch.** Header, then the *findings deck*
+  (`FindingsDeck`), then the scrolling telemetry with the verdict at its tail.
+  The deck is mounted outside the scroller and is height-capped, so once an
+  oracle fires it stays on screen through the verdict — DEMO §1's two carrying
+  events used to fire, scroll, and be gone by the climax. The deck is a
+  **headline**, one line of fact plus the single artifact that reads from the
+  back of a room (the added byte run; the canary and its destination); the full
+  record — gloss, evidence ids, complete byte ledger — stays in the stream
+  below. Both scroll edges are mask-faded so a cut row never slices flat.
+- **The scan column must land its CLEAN.** It is the quieter half in *tone*,
+  not in presence: the result is a real stamp one rank below the verdict's, and
+  the space under six lines of scanner output carries the blind-spot list
+  rather than being left hollow. The side-by-side has no tension if one side
+  is a footnote.
 - The left (scan) column is deliberately **quieter and flatter** — lower
   contrast, no bezel, no bloom. The asymmetry *is* the argument.
 - **Comfortable, not compressed.** The reference breathes: ~16–20px panel
@@ -145,6 +159,10 @@ sweeps, uppercase-mono chrome labels.
 - Visible focus ring on every interactive element (`ring-2 ring-accent/60
   ring-offset-2 ring-offset-bg`), and real `:focus-visible` styling on the
   buttons in the top bar and picker.
+- The console opens **dark** with no stored choice — it does not follow the OS.
+  A judge on a light-mode laptop was being shown the pale theme for a demo whose
+  whole shape is a dark instrument carrying two coloured stamps. Light stays a
+  first-class choice, it is just not the first impression.
 - Keep the light theme genuinely good, not an afterthought. Same structure,
   ink-on-paper instrument feel.
 

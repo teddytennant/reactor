@@ -183,7 +183,11 @@ The `verdict` event carries the final `Verdict`.
 ```
 reactor serve
 reactor list
-reactor detonate <artifact_id> [-sessions N] [-victim auto|fireworks|xai|sglang|sim] [-json]
+reactor detonate <artifact_id|path|repo-url|owner/repo|spec> [-ref main] [-network] [-sessions N] [-victim auto|fireworks|xai|sglang|sim] [-json]
 ```
 
-Flags and env defaults live in `cmd/reactor/main.go`. Chamber binaries are resolved from `-bin` (`REACTOR_BIN_DIR`, default `bin`).
+`detonate` accepts the same intake shapes as the web console: a zoo id, a local
+zip/tar/tar.gz path (staged in-process), an https git URL or `owner/repo`, or an
+inline command spec (`npx -y pkg`, bare package name, …). Flags and env defaults
+live in `cmd/reactor/main.go`. Chamber binaries are resolved from `-bin`
+(`REACTOR_BIN_DIR`, default `bin`).

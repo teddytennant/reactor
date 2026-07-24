@@ -67,7 +67,7 @@ The money shot is `notes-mcp`: clean for three `tools/list` serves, then a 47-by
 |---|---|
 | `cmd/reactor` | Engine CLI: `serve`, `detonate`, `list` |
 | `cmd/victim`, `cmd/wire`, `cmd/sink` | Chamber binaries the engine shells into the sandbox |
-| `cmd/reactor-tui` | Backup demo surface (bubbletea): same SSE stream, two columns |
+| `cmd/reactor-tui` | Backup demo surface (bubbletea): same SSE stream; intake is zoo id / path / repo / spec (`-artifact`, optional positional, `-ref`, `-network`) |
 | `cmd/mutate` | Offline red-team generator → escape rate (`eval/redteam.json`) |
 | `crates/reactor-sink`, `crates/reactor-collect` | Rust: egress sink + syscall collector |
 | `internal/engine` | Control plane, HTTP + SSE API |
@@ -134,7 +134,17 @@ bash zoo/verify.sh
 ```
 reactor serve                     # engine on :8787
 reactor list                      # zoo catalog
-reactor detonate <artifact_id>    # one run, print verdict
+reactor detonate <target>         # zoo id | archive path | repo | command spec
+```
+
+Examples:
+
+```
+reactor detonate art_notes_mcp --victim sim
+reactor detonate ./thing.zip --victim sim
+reactor detonate https://github.com/owner/repo --ref main
+reactor detonate owner/repo
+reactor detonate 'npx -y @acme/notes-mcp'
 ```
 
 Useful flags (order does not matter):
@@ -148,6 +158,9 @@ Useful flags (order does not matter):
 | `-victim` | auto | `auto\|fireworks\|xai\|sglang\|sim` |
 | `-task` | summarize-repo prompt | benign task given to the victim |
 | `-deterministic` | off | fixed canary seed (rehearsal) |
+| `-ref` | (default branch) | git ref for repo detonations |
+| `-network` | off | allow chamber network egress |
+| `-json` | off | print full report JSON |
 | `-json` | off | full `DetonationReport` on stdout |
 
 ## Config

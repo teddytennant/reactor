@@ -3,9 +3,13 @@
 // deterministic oracles over the resulting evidence, asks the analyst for a
 // verdict, and streams every typed event to the UI over SSE.
 //
-//	reactor serve                 — run the engine API on :8787 (what the UI talks to)
-//	reactor detonate <artifact>   — run one detonation and print the verdict
-//	reactor list                  — list the loaded zoo
+//	reactor serve                                              — engine API on :8787
+//	reactor list                                               — list the loaded zoo
+//	reactor detonate <artifact_id|path|repo|spec> [flags]      — one run, print verdict
+//
+// Detonate accepts the same intake surface as the website: a zoo id, a local
+// zip/tar archive, an https git URL (or owner/repo), or an inline command spec
+// such as `npx -y @acme/notes-mcp`.
 package main
 
 import (
@@ -17,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +29,7 @@ import (
 	"github.com/reactor-sec/reactor/internal/dotenv"
 	"github.com/reactor-sec/reactor/internal/engine"
 	"github.com/reactor-sec/reactor/internal/events"
+	"github.com/reactor-sec/reactor/internal/intake"
 )
 
 func main() {
@@ -40,11 +46,15 @@ func main() {
 		task     = flag.String("task", envOr("REACTOR_TASK", "Summarize what this repository does."), "the benign task given to the victim")
 		det      = flag.Bool("deterministic", false, "derive canaries from a fixed seed (rehearsal mode)")
 		jsonOut  = flag.Bool("json", false, "print the full report as JSON")
+		ref      = flag.String("ref", "", "git ref (branch, tag, or commit) for repo detonations")
+		network  = flag.Bool("network", false, "allow chamber network egress during detonation")
 	)
 	// Go's flag package stops at the first non-flag arg, which would silently
 	// drop flags written after a positional (`detonate x --victim sim`). Split
 	// flags from positionals ourselves so order never matters.
-	flags, positionals := splitFlagsPositionals(os.Args[1:], map[string]bool{"deterministic": true, "json": true})
+	flags, positionals := splitFlagsPositionals(os.Args[1:], map[string]bool{
+		"deterministic": true, "json": true, "network": true,
+	})
 	flag.CommandLine.Parse(flags)
 	cmd := "serve"
 	var cmdArgs []string
@@ -75,9 +85,14 @@ func main() {
 		}
 	case "detonate":
 		if len(args) < 1 {
-			log.Fatal("usage: reactor detonate <artifact_id> [--sessions N] [--victim sim|fireworks]")
+			log.Fatal("usage: reactor detonate <artifact_id|path|repo-url|owner/repo|spec> [--ref main] [--network] [--sessions N] [--victim sim|fireworks] [--json]")
 		}
-		detonate(e, args[0], *sessions, *jsonOut)
+		detonate(e, args[0], detonateOpts{
+			sessions: *sessions,
+			ref:      *ref,
+			network:  *network,
+			asJSON:   *jsonOut,
+		})
 	default:
 		log.Fatalf("unknown command %q (serve|detonate|list)", cmd)
 	}
@@ -135,12 +150,25 @@ func serve(e *engine.Engine, addr string) {
 	}
 }
 
+type detonateOpts struct {
+	sessions int
+	ref      string
+	network  bool
+	asJSON   bool
+}
+
 // detonate runs one artifact to completion and prints a demo-shaped summary.
-func detonate(e *engine.Engine, artifactID string, sessions int, asJSON bool) {
+// The token is classified the same way the web console's ArtifactIntake is.
+func detonate(e *engine.Engine, token string, opts detonateOpts) {
+	req, err := buildDetonateRequest(e, token, opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	id, err := e.Detonate(engine.DetonateRequest{ArtifactID: artifactID, Sessions: sessions})
+	id, err := e.Detonate(req)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -178,7 +206,7 @@ done:
 	if !ok {
 		log.Fatal("no report")
 	}
-	if asJSON {
+	if opts.asJSON {
 		b, _ := json.MarshalIndent(rep, "", "  ")
 		fmt.Println(string(b))
 		return
@@ -186,6 +214,47 @@ done:
 	renderSummary(rep)
 	if rep.Verdict != nil && rep.Verdict.Label != events.LabelAllowed {
 		os.Exit(2) // a blocked artifact is a non-zero exit, for scripting
+	}
+}
+
+// buildDetonateRequest turns a free-form CLI token into an engine request.
+func buildDetonateRequest(e *engine.Engine, token string, opts detonateOpts) (engine.DetonateRequest, error) {
+	parsed := intake.Resolve(token, opts.ref)
+	req := engine.DetonateRequest{Sessions: opts.sessions, Network: opts.network}
+
+	switch parsed.Kind {
+	case intake.Empty:
+		return req, fmt.Errorf("usage: reactor detonate <artifact_id|path|repo-url|owner/repo|spec>")
+	case intake.Refused:
+		return req, fmt.Errorf("%s", parsed.Message)
+	case intake.File:
+		log.Printf("staging upload %s", filepath.Base(parsed.Path))
+		up, err := e.StagePath(parsed.Path, engine.StageOpts{})
+		if err != nil {
+			return req, err
+		}
+		req.UploadID = up.UploadID
+		return req, nil
+	case intake.Repo:
+		log.Printf("cloning %s", parsed.RepoURL)
+		req.Repo = parsed.RepoURL
+		req.Ref = parsed.Ref
+		return req, nil
+	case intake.Spec:
+		log.Printf("inline spec %s", parsed.SpecCommand)
+		req.Artifact = &events.Artifact{
+			Name:   parsed.SpecName,
+			Kind:   events.KindMCPServer,
+			Source: parsed.SpecCommand,
+		}
+		return req, nil
+	case intake.ZooID:
+		req.ArtifactID = parsed.ArtifactID
+		return req, nil
+	default:
+		// Fallback: treat as zoo id so a future Kind cannot silently no-op.
+		req.ArtifactID = strings.TrimSpace(token)
+		return req, nil
 	}
 }
 

@@ -118,6 +118,25 @@ func (c *Chamber) UploadDir(_ context.Context, hostDir, chamberDir string) error
 	})
 }
 
+// StageBinary implements chamber.Chamber. The local chamber shares the host
+// filesystem, so a host-built binary is already runnable where it stands and the
+// path is returned unchanged — the only work is proving it is really there, so a
+// missing build fails here with a readable error instead of as exit 127 inside a
+// session.
+func (c *Chamber) StageBinary(_ context.Context, hostPath string) (string, error) {
+	if strings.TrimSpace(hostPath) == "" {
+		return "", fmt.Errorf("stage binary: empty host path")
+	}
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		return "", fmt.Errorf("stage binary %s: %w", hostPath, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("stage binary %s: is a directory", hostPath)
+	}
+	return hostPath, nil
+}
+
 // Exec runs a command to completion inside the chamber.
 func (c *Chamber) Exec(ctx context.Context, opts chamber.ExecOpts) (*chamber.ExecResult, error) {
 	if len(opts.Cmd) == 0 {
@@ -137,7 +156,7 @@ func (c *Chamber) Exec(ctx context.Context, opts chamber.ExecOpts) (*chamber.Exe
 	}
 	var outBuf, errBuf strings.Builder
 	if opts.StdoutPath != "" {
-		f, err := os.Create(c.resolve(opts.StdoutPath))
+		f, err := c.createUnder(opts.StdoutPath)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +166,7 @@ func (c *Chamber) Exec(ctx context.Context, opts chamber.ExecOpts) (*chamber.Exe
 		cmd.Stdout = &outBuf
 	}
 	if opts.StderrPath != "" {
-		f, err := os.Create(c.resolve(opts.StderrPath))
+		f, err := c.createUnder(opts.StderrPath)
 		if err != nil {
 			return nil, err
 		}
@@ -180,12 +199,22 @@ func (c *Chamber) Start(ctx context.Context, opts chamber.ExecOpts) (chamber.Han
 	cmd.Dir = c.dirOf(opts.Dir)
 	cmd.Env = c.envOf(opts.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Not `f, _ :=`. A redirect target that cannot be opened used to leave a nil
+	// *os.File in cmd.Stdout, which os/exec passes down as a bogus descriptor —
+	// the process starts, writes nowhere, and the caller is none the wiser. The
+	// same class of silence that a missing logs/ dir causes remotely.
 	if opts.StdoutPath != "" {
-		f, _ := os.Create(c.resolve(opts.StdoutPath))
+		f, err := c.createUnder(opts.StdoutPath)
+		if err != nil {
+			return nil, err
+		}
 		cmd.Stdout = f
 	}
 	if opts.StderrPath != "" {
-		f, _ := os.Create(c.resolve(opts.StderrPath))
+		f, err := c.createUnder(opts.StderrPath)
+		if err != nil {
+			return nil, err
+		}
 		cmd.Stderr = f
 	}
 	if err := cmd.Start(); err != nil {
@@ -346,6 +375,17 @@ func (c *Chamber) envOf(extra map[string]string) []string {
 	return env
 }
 
+// createUnder opens a chamber-relative path for writing, making its parent
+// directory first so a redirect can never fail merely because nothing has
+// written into that directory yet.
+func (c *Chamber) createUnder(p string) (*os.File, error) {
+	full := c.resolve(p)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return nil, err
+	}
+	return os.Create(full)
+}
+
 // maybeTrace wraps the command in strace when requested and available, so file
 // and network syscalls become behavioral evidence (SPEC §4.3).
 func (c *Chamber) maybeTrace(opts chamber.ExecOpts) []string {
@@ -360,7 +400,11 @@ func (c *Chamber) maybeTrace(opts chamber.ExecOpts) []string {
 	if tp == "" {
 		tp = "logs/strace.log"
 	}
-	pre := []string{strace, "-f", "-e", "trace=file,network,process", "-o", c.resolve(tp), "--"}
+	full := c.resolve(tp)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return opts.Cmd // no trace file is possible; run untraced rather than not at all
+	}
+	pre := []string{strace, "-f", "-e", "trace=file,network,process", "-o", full, "--"}
 	return append(pre, opts.Cmd...)
 }
 

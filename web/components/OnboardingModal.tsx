@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { Check, ExternalLink, KeyRound, X } from "lucide-react";
+import Link from "next/link";
+import { Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   EMPTY_CREDENTIALS,
-  clearCredentials,
-  hasDaytona,
-  hasFireworks,
   loadCredentials,
   markOnboardingDone,
   saveCredentials,
@@ -15,22 +13,23 @@ import {
 } from "@/lib/credentials";
 import { DEFAULT_LOCAL_ENGINE, engineOrigin, setEngineOrigin } from "@/lib/engine";
 
-type Mode = "onboarding" | "settings";
-
-export interface CredentialsModalProps {
+export interface OnboardingModalProps {
   open: boolean;
-  mode: Mode;
   onClose: () => void;
-  /** Fired after save or skip so the console can refresh badges. */
+  /** Fired after save or skip so the console can pick the keys up. */
   onChange?: (c: Credentials) => void;
 }
 
 /**
- * First-run onboarding + settings. Asks for Daytona (disposable chamber) and
- * Fireworks (victim + analyst models). Keys stay in localStorage and only leave
- * the browser toward the engine on detonate/upload — never to Vercel.
+ * First run only. Asks for the two keys a live detonation needs — Daytona (the
+ * disposable chamber) and Fireworks (victim + analyst models) — and where the
+ * engine is listening. Keys stay in localStorage and only leave the browser
+ * toward the engine on detonate/upload, never to the Vercel host.
+ *
+ * Everything else, and every later edit, lives on /settings. This dialog is
+ * deliberately the short version of that page.
  */
-export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsModalProps) {
+export function OnboardingModal({ open, onClose, onChange }: OnboardingModalProps) {
   const titleId = useId();
   const [draft, setDraft] = useState<Credentials>(EMPTY_CREDENTIALS);
   const [engineDraft, setEngineDraft] = useState("");
@@ -45,30 +44,15 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
     setSavedFlash(false);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   if (!open) return null;
 
-  const isOnboarding = mode === "onboarding";
-
-  const commit = (next: Credentials, done: boolean) => {
-    saveCredentials(next);
+  const save = () => {
+    saveCredentials(draft);
     // Blank means "use the default" rather than "use same-origin", which for a
     // deployed static export would be the 404 page.
     setEngineOrigin(engineDraft.trim() || DEFAULT_LOCAL_ENGINE);
-    if (done) markOnboardingDone();
-    onChange?.(next);
-  };
-
-  const save = () => {
-    commit(draft, true);
+    markOnboardingDone();
+    onChange?.(draft);
     setSavedFlash(true);
     window.setTimeout(() => {
       setSavedFlash(false);
@@ -82,13 +66,6 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
     onClose();
   };
 
-  const clear = () => {
-    clearCredentials();
-    const empty = { ...EMPTY_CREDENTIALS };
-    setDraft(empty);
-    onChange?.(empty);
-  };
-
   const set =
     (field: keyof Credentials) =>
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,9 +76,6 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-bg/70 p-4 backdrop-blur-sm sm:items-center"
       role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !isOnboarding) onClose();
-      }}
     >
       <div
         role="dialog"
@@ -109,38 +83,25 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
         aria-labelledby={titleId}
         className="panel relative flex w-full max-w-lg flex-col overflow-hidden shadow-panel"
       >
-        <div className="flex items-start gap-4 px-6 pb-5 pt-6">
-          <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-lg font-semibold tracking-tight text-fg">
-              {isOnboarding ? "Bring your own keys" : "API keys"}
-            </h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted">
-              {isOnboarding
-                ? "Reactor runs detonations in your Daytona sandboxes and drives victim + analyst models on Fireworks. Keys stay in this browser."
-                : "Stored only in this browser’s localStorage. Sent to the engine on detonate — never to the Vercel frontend host."}
-            </p>
-          </div>
-          {!isOnboarding && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="focus-ring -mr-2 -mt-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-fg"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
+        <div className="px-6 pb-5 pt-6">
+          <h2 id={titleId} className="text-lg font-semibold tracking-tight text-fg">
+            Bring your own keys
+          </h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">
+            Reactor runs detonations in your Daytona sandboxes and drives victim + analyst models
+            on Fireworks. Keys stay in this browser.
+          </p>
         </div>
 
         <div className="flex flex-col gap-4 px-6 pb-5">
           <Field
             label="Daytona API key"
             hint="Disposable sandbox per detonation"
-            htmlFor="cred-daytona-key"
+            htmlFor="onb-daytona-key"
             docs="https://www.daytona.io/docs"
           >
             <input
-              id="cred-daytona-key"
+              id="onb-daytona-key"
               type={showKeys ? "text" : "password"}
               autoComplete="off"
               spellCheck={false}
@@ -152,30 +113,13 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
           </Field>
 
           <Field
-            label="Daytona API URL"
-            hint="Leave blank for the default cloud API"
-            htmlFor="cred-daytona-url"
-          >
-            <input
-              id="cred-daytona-url"
-              type="url"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="https://app.daytona.io/api"
-              value={draft.daytonaApiUrl}
-              onChange={set("daytonaApiUrl")}
-              className="field-input font-mono text-sm"
-            />
-          </Field>
-
-          <Field
             label="Fireworks API key"
             hint="Victim agent + analyst model"
-            htmlFor="cred-fireworks-key"
+            htmlFor="onb-fireworks-key"
             docs="https://fireworks.ai/account/api-keys"
           >
             <input
-              id="cred-fireworks-key"
+              id="onb-fireworks-key"
               type={showKeys ? "text" : "password"}
               autoComplete="off"
               spellCheck={false}
@@ -212,10 +156,10 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
             <Field
               label="Engine URL"
               hint="Your own machine — nothing is hosted"
-              htmlFor="cred-engine-url"
+              htmlFor="onb-engine-url"
             >
               <input
-                id="cred-engine-url"
+                id="onb-engine-url"
                 type="url"
                 autoComplete="off"
                 spellCheck={false}
@@ -236,53 +180,33 @@ export function CredentialsModal({ open, mode, onClose, onChange }: CredentialsM
 
           <p className="text-sm leading-relaxed text-faint">
             Without an engine you can still explore the bundled replay demo. With no Fireworks key
-            the engine falls back to the sim victim and deterministic analyst.
+            the engine falls back to the sim victim and deterministic analyst. All of this is
+            editable later in{" "}
+            <Link
+              href="/settings"
+              className="focus-ring rounded text-muted underline underline-offset-4 hover:text-fg"
+            >
+              Settings
+            </Link>
+            .
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line px-6 py-4">
-          {isOnboarding ? (
-            <>
-              <button
-                type="button"
-                onClick={save}
-                className="focus-ring inline-flex items-center gap-2 rounded-xl bg-fg px-4 py-2.5 text-sm font-semibold text-bg transition hover:opacity-90"
-              >
-                {savedFlash ? "Saved" : "Save & continue"}
-              </button>
-              <button
-                type="button"
-                onClick={skip}
-                className="focus-ring inline-flex items-center gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-fg"
-              >
-                Skip — try the replay
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={save}
-                className="focus-ring inline-flex items-center gap-2 rounded-xl bg-fg px-4 py-2.5 text-sm font-semibold text-bg transition hover:opacity-90"
-              >
-                {savedFlash ? "Saved" : "Save"}
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="focus-ring inline-flex items-center gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-fg"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={clear}
-                className="focus-ring ml-auto inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition hover:bg-danger/10 hover:text-danger"
-              >
-                Clear keys
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={save}
+            className="focus-ring inline-flex items-center gap-2 rounded-xl bg-fg px-4 py-2.5 text-sm font-semibold text-bg transition hover:opacity-90"
+          >
+            {savedFlash ? "Saved" : "Save & continue"}
+          </button>
+          <button
+            type="button"
+            onClick={skip}
+            className="focus-ring inline-flex items-center gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-fg"
+          >
+            Skip — try the replay
+          </button>
         </div>
       </div>
     </div>
@@ -323,36 +247,5 @@ function Field({
       </div>
       {children}
     </div>
-  );
-}
-
-/** Compact status chip for the top bar: which BYOK pieces are present. */
-export function CredentialsBadge({
-  credentials,
-  onClick,
-}: {
-  credentials: Credentials;
-  onClick: () => void;
-}) {
-  const d = hasDaytona(credentials);
-  const f = hasFireworks(credentials);
-  const label =
-    d && f ? "Keys set" : d ? "Daytona only" : f ? "Fireworks only" : "Add keys";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Daytona + Fireworks API keys (stored in this browser)"
-      className={cn(
-        "focus-ring hidden items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium transition-colors sm:inline-flex",
-        d || f
-          ? "bg-success/10 text-success hover:bg-success/15"
-          : "bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg",
-      )}
-    >
-      <KeyRound size={13} strokeWidth={1.75} aria-hidden="true" />
-      {label}
-    </button>
   );
 }

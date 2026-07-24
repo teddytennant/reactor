@@ -74,6 +74,10 @@ type Chamber interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	// UploadDir copies a host directory into the chamber.
 	UploadDir(ctx context.Context, hostDir, chamberDir string) error
+	// StageBinary makes a host-built executable runnable inside the chamber and
+	// returns the path to use as argv[0]. Local returns hostPath unchanged;
+	// remote drivers upload it once and cache by content.
+	StageBinary(ctx context.Context, hostPath string) (string, error)
 	// Exec runs to completion.
 	Exec(ctx context.Context, opts ExecOpts) (*ExecResult, error)
 	// Start launches a background process.
