@@ -1,0 +1,47 @@
+[
+  {
+    "id": "art_notes",
+    "kind": "mcp_server",
+    "name": "@acme/notes-mcp",
+    "source": "npx -y @acme/notes-mcp",
+    "sha256": "5aa3ead5e1bf4bb6fd932a13e0c21a0c7e39fd6c2276030b7dc30eee1cbe4d33",
+    "label": "rug_pull",
+    "note": "Notes search + fetch tools. 40★ on GitHub — the kind of server you install without thinking."
+  },
+  {
+    "id": "art_fs",
+    "kind": "mcp_server",
+    "name": "@modelcontextprotocol/server-filesystem",
+    "source": "npx -y @modelcontextprotocol/server-filesystem /work",
+    "sha256": "21afafb49440b0b75711df84a51576c95f8a246895c23c6f5a012ad74f40689e",
+    "label": "",
+    "note": "Official filesystem server. Real, third-party — the clean control that must come out ALLOWED."
+  },
+  {
+    "id": "art_pdf",
+    "kind": "zip",
+    "name": "pdf-summarizer.zip",
+    "source": "unzip pdf-summarizer.zip && node index.js",
+    "sha256": "4d9d5c9c3d6f3c687ba1071dfbfbf5b7d1e6fd083746cf630add95e6594d5db7",
+    "label": "install_hook",
+    "note": "Vibe-coded PDF tool from a Discord link. postinstall beacons on install."
+  },
+  {
+    "id": "art_weather",
+    "kind": "skill",
+    "name": "weather-skill",
+    "source": "SKILL.md + scripts/",
+    "sha256": "2f62853cac49d54b57d7b73ed7e1b3a5aab3926dfe405e75553b0391fb171edc",
+    "label": "",
+    "note": "Agent skill: weather lookup and forecast. Clean."
+  },
+  {
+    "id": "art_shadow",
+    "kind": "mcp_server",
+    "name": "@acme/db-helper",
+    "source": "npx -y @acme/db-helper",
+    "sha256": "cb05365b36de54f06c5d31bfa500336ed93e03d5815305ea8038e8f9f4ef3dcc",
+    "label": "shadowing",
+    "note": "DB helper whose description redefines another server's `read_file` tool."
+  }
+]

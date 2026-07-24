@@ -1,0 +1,652 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   REACTOR — foundation layer.
+
+   A live containment instrument, not a dashboard. The base is a cold near-black
+   graphite with a blue cast (hue ~222); elevation is lightness steps + hairlines
+   + a 1px inner top highlight, never drop shadows. `accent` is a luminous plasma
+   indigo-violet; `live` is a cool cyan-teal reserved for in-flight telemetry;
+   `danger` crimson is reserved for fired signals and BLOCKED only.
+
+   Every channel is stored as space-separated RGB so all Tailwind opacity
+   utilities (bg-surface/60, border-danger/35, text-live/70, …) keep working.
+   See DESIGN.md §6 for the full token + primitive reference.
+
+   Contrast (verified, WCAG 2.1 on every surface in both themes):
+     dark  — fg 13.5:1  muted 6.3:1  faint 3.5:1  accent 4.9:1  danger 4.7:1
+     light — fg 15.4:1  muted 5.7:1  faint 3.4:1  accent 5.1:1  danger 4.7:1
+   `live` (hue 191) and `success` (hue 142-148) sit ~46-49° apart so they never
+   read as the same lamp at dot size.
+   ========================================================================== */
+
+:root {
+  /* --- surfaces: white panels on a cool paper page, wells stepping down ---- */
+  --bg: 246 248 250;              /* #F6F8FA */
+  --surface: 255 255 255;         /* #FFFFFF */
+  --surface-2: 240 242 246;       /* #F0F2F6 */
+  --surface-3: 230 233 239;       /* #E6E9EF */
+  --line: 218 222 231;            /* #DADEE7 */
+  --line-strong: 188 195 207;     /* #BCC3CF */
+
+  /* --- ink ---------------------------------------------------------------- */
+  --fg: 15 18 24;                 /* #0F1218 */
+  --muted: 82 90 105;             /* #525A69 */
+  --faint: 117 125 140;           /* #757D8C */
+
+  /* --- roles -------------------------------------------------------------- */
+  --accent: 88 66 232;            /* #5842E8  plasma indigo-violet */
+  --accent-fg: 255 255 255;
+  --accent-dim: 237 235 253;      /* #EDEBFD */
+  --live: 7 113 138;              /* #07718A  cyan-teal, in-flight telemetry */
+  --live-fg: 255 255 255;
+  --live-dim: 224 242 246;        /* #E0F2F6 */
+  --danger: 199 31 55;            /* #C71F37  reserved crimson */
+  --danger-fg: 255 255 255;
+  --danger-dim: 253 234 237;      /* #FDEAED */
+  --success: 12 110 58;           /* #0C6E3A */
+  --success-fg: 255 255 255;
+  --success-dim: 226 244 233;     /* #E2F4E9 */
+  --warning: 140 90 12;           /* #8C5A0C */
+  --warning-fg: 255 255 255;
+  --warning-dim: 251 241 223;     /* #FBF1DF */
+
+  /* --- texture / depth knobs --------------------------------------------- */
+  --grid-a: 0.05;                 /* instrument-grid dot alpha */
+  --bloom-k: 1.15;                /* core-bloom alpha multiplier for this theme */
+  --led-gloss: 0.32;              /* specular core on a lit LED */
+  --led-halo: 0.75;               /* LED bloom strength */
+  --shadow: 15 23 42;             /* the color things cast */
+  --panel-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 1px 2px -1px rgb(var(--shadow) / 0.07);
+  --panel-shadow-flat: inset 0 1px 0 rgb(255 255 255 / 0.9);
+}
+
+.dark {
+  /* --- surfaces: even ~3.2 L* steps off a cold near-black ------------------ */
+  --bg: 9 11 16;                  /* #090B10  L* 3.0 */
+  --surface: 16 20 28;            /* #10141C  L* 6.3 */
+  --surface-2: 23 27 36;          /* #171B24  L* 9.7 */
+  --surface-3: 29 33 44;          /* #1D212C  L* 12.8 */
+  --line: 41 47 62;               /* #292F3E */
+  --line-strong: 61 68 85;        /* #3D4455 */
+
+  /* --- ink ---------------------------------------------------------------- */
+  --fg: 232 235 243;              /* #E8EBF3 */
+  --muted: 153 163 183;           /* #99A3B7 */
+  --faint: 109 118 136;           /* #6D7688 */
+
+  /* --- roles: high chroma so they glow convincingly on near-black --------- */
+  --accent: 139 123 255;          /* #8B7BFF */
+  --accent-fg: 9 11 16;           /* deep ink on a luminous fill */
+  --accent-dim: 26 24 58;         /* #1A183A */
+  --live: 25 199 238;             /* #19C7EE */
+  --live-fg: 9 11 16;
+  --live-dim: 7 42 51;            /* #072A33 */
+  --danger: 255 64 89;            /* #FF4059 */
+  --danger-fg: 9 11 16;
+  --danger-dim: 46 16 21;         /* #2E1015 */
+  --success: 63 206 116;          /* #3FCE74 */
+  --success-fg: 9 11 16;
+  --success-dim: 12 43 27;        /* #0C2B1B */
+  --warning: 245 179 60;          /* #F5B33C */
+  --warning-fg: 9 11 16;
+  --warning-dim: 43 31 10;        /* #2B1F0A */
+
+  /* --- texture / depth knobs --------------------------------------------- */
+  --grid-a: 0.05;
+  --bloom-k: 1;
+  --led-gloss: 0.6;
+  --led-halo: 1;
+  --shadow: 0 0 0;
+  --panel-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.045),
+    0 1px 2px -1px rgb(var(--shadow) / 0.6);
+  --panel-shadow-flat: inset 0 1px 0 rgb(255 255 255 / 0.045);
+}
+
+@layer base {
+  * {
+    border-color: rgb(var(--line));
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--fg));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background-color: rgb(var(--accent) / 0.3);
+  }
+  /* A visible focus ring on everything interactive, at zero specificity so any
+     component can override it with `.focus-ring` or its own utilities. */
+  :where(a, button, summary, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--accent) / 0.7);
+    outline-offset: 2px;
+  }
+  /* Thin, unobtrusive scrollbars — this is a console. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line-strong)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--line-strong));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ==========================================================================
+   Keyframes used by the component classes below. Declared outside @layer so
+   they are always emitted regardless of which utilities Tailwind sees.
+   ========================================================================== */
+
+/* core-bloom, running: a slow, shallow breath. */
+@keyframes core-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* scan-sweep: a thin luminous pip travelling the top edge, left to right. */
+@keyframes scan-sweep {
+  0% {
+    background-position: -70% 0, -70% 0;
+  }
+  100% {
+    background-position: 170% 0, 170% 0;
+  }
+}
+
+/* led: the slow halo breath on a live lamp. */
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+}
+
+@layer components {
+  /* ------------------------------------------------------------------------
+     PANEL — hairline + 1px inner top highlight. No heavy shadow, ever.
+     ---------------------------------------------------------------------- */
+  .panel {
+    @apply relative rounded-xl border border-line bg-surface;
+    box-shadow: var(--panel-shadow);
+  }
+  /* Same panel, zero cast shadow — for panels that sit inside another panel's
+     rhythm or on top of the bloom. */
+  .panel-flat {
+    @apply relative rounded-xl border border-line bg-surface;
+    box-shadow: var(--panel-shadow-flat);
+  }
+  /* Genuinely floating things only: verdict banner, popovers. */
+  .panel-float {
+    @apply relative rounded-xl border border-line bg-surface;
+    box-shadow:
+      var(--panel-shadow-flat),
+      0 18px 48px -26px rgb(var(--shadow) / 0.55),
+      0 2px 10px -6px rgb(var(--shadow) / 0.4);
+  }
+
+  .hairline {
+    @apply border-t border-line;
+  }
+  /* A hairline that fades out — the tail of a section label. */
+  .rule {
+    @apply h-px flex-1;
+    background: linear-gradient(90deg, rgb(var(--line)), rgb(var(--line) / 0));
+  }
+
+  /* ------------------------------------------------------------------------
+     CONTAINMENT BEZEL — inset ring + corner tick marks. Blast-door energy.
+     The Reactor column wears this; the scan column never does.
+     Uses BOTH ::before (ring) and ::after (ticks) — do not combine on the same
+     element as .instrument-grid / .core-bloom / .scan-sweep. Nest instead.
+     ---------------------------------------------------------------------- */
+  .bezel {
+    /* The ring stays a whisper so the corner brackets are what you actually
+       see. Ring ~0.08, ticks ~0.45 — if the ring reads as a colored outline,
+       it is too strong. */
+    --bezel: var(--accent);
+    --bezel-a: 0.45;
+    --bezel-ring-a: 0.08;
+    @apply relative rounded-xl border border-line bg-surface;
+    box-shadow: var(--panel-shadow-flat);
+  }
+  .bezel::before {
+    content: "";
+    position: absolute;
+    inset: 5px;
+    border-radius: 6px;
+    border: 1px solid rgb(var(--bezel) / var(--bezel-ring-a));
+    pointer-events: none;
+  }
+  /* Four 1px L-brackets, drawn as eight positioned gradient slabs on one layer
+     so a single pseudo-element carries all four corners. */
+  .bezel::after {
+    --tick: 14px;
+    --tick-w: 1px;
+    --tick-c: rgb(var(--bezel) / var(--bezel-a));
+    content: "";
+    position: absolute;
+    inset: 5px;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    background-image:
+      linear-gradient(var(--tick-c), var(--tick-c)), linear-gradient(var(--tick-c), var(--tick-c)),
+      linear-gradient(var(--tick-c), var(--tick-c)), linear-gradient(var(--tick-c), var(--tick-c)),
+      linear-gradient(var(--tick-c), var(--tick-c)), linear-gradient(var(--tick-c), var(--tick-c)),
+      linear-gradient(var(--tick-c), var(--tick-c)), linear-gradient(var(--tick-c), var(--tick-c));
+    background-size:
+      var(--tick) var(--tick-w), var(--tick-w) var(--tick),
+      var(--tick) var(--tick-w), var(--tick-w) var(--tick),
+      var(--tick) var(--tick-w), var(--tick-w) var(--tick),
+      var(--tick) var(--tick-w), var(--tick-w) var(--tick);
+    background-position:
+      left top, left top,
+      right top, right top,
+      left bottom, left bottom,
+      right bottom, right bottom;
+  }
+  .bezel[data-state="running"] {
+    --bezel: var(--live);
+    --bezel-a: 0.6;
+    --bezel-ring-a: 0.1;
+  }
+  .bezel[data-state="allowed"] {
+    --bezel: var(--success);
+    --bezel-a: 0.6;
+    --bezel-ring-a: 0.1;
+  }
+  .bezel[data-state="blocked"] {
+    --bezel: var(--danger);
+    --bezel-a: 0.85;
+    --bezel-ring-a: 0.14;
+    border-color: rgb(var(--danger) / 0.3);
+    box-shadow:
+      var(--panel-shadow-flat),
+      0 0 0 1px rgb(var(--danger) / 0.16),
+      0 0 44px -20px rgb(var(--danger) / 0.75);
+  }
+
+  /* ------------------------------------------------------------------------
+     CORE BLOOM — the state-reactive radial ambient behind the Reactor column.
+     The single most identity-defining element on the page. Keep it subtle:
+     if you can point at it, it is too strong.
+     Renders at z-index -1 inside its own stacking context, so it sits above
+     this element's background and below its content — put it on the column
+     wrapper and let it read through the gaps between panels.
+     Uses ::before only.
+     ---------------------------------------------------------------------- */
+  .core-bloom {
+    --bloom: var(--accent);
+    --bloom-a: 0.05;
+    position: relative;
+    isolation: isolate;
+  }
+  .core-bloom::before {
+    content: "";
+    position: absolute;
+    inset: -4% -5% auto -5%;
+    height: min(760px, 85%);
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        56% 60% at 50% 6%,
+        rgb(var(--bloom) / calc(var(--bloom-a) * var(--bloom-k))),
+        transparent 72%
+      ),
+      radial-gradient(
+        130% 42% at 50% 0%,
+        rgb(var(--bloom) / calc(var(--bloom-a) * var(--bloom-k) * 0.5)),
+        transparent 70%
+      );
+  }
+  .core-bloom[data-core="idle"] {
+    --bloom: var(--accent);
+    --bloom-a: 0.05;
+  }
+  .core-bloom[data-core="running"] {
+    --bloom: var(--accent);
+    --bloom-a: 0.11;
+  }
+  .core-bloom[data-core="running"]::before {
+    animation: core-breathe 5.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  .core-bloom[data-core="blocked"] {
+    --bloom: var(--danger);
+    --bloom-a: 0.12;
+  }
+  .core-bloom[data-core="allowed"] {
+    --bloom: var(--success);
+    --bloom-a: 0.09;
+  }
+
+  /* ------------------------------------------------------------------------
+     INSTRUMENT GRID — graph paper under glass, ~2-3% effective coverage.
+     Uses ::before only (same stacking trick as .core-bloom).
+     ---------------------------------------------------------------------- */
+  .instrument-grid {
+    position: relative;
+    isolation: isolate;
+  }
+  .instrument-grid::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    background-image: radial-gradient(rgb(var(--fg) / var(--grid-a)) 1px, transparent 1.1px);
+    background-size: var(--grid-size, 15px) var(--grid-size, 15px);
+    background-position: center top;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  }
+  /* Line variant — same rules, ruled paper instead of dots. */
+  .instrument-grid-lines::before {
+    background-image:
+      linear-gradient(to right, rgb(var(--fg) / var(--grid-a)) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--fg) / var(--grid-a)) 1px, transparent 1px);
+  }
+
+  /* ------------------------------------------------------------------------
+     GUTTER RAIL — dense technical streams read as a timeline, not a list.
+     .rail draws the vertical hairline (::before). .rail-row is a 2-column grid
+     whose first cell is the mono index/time; .rail-node is the marker that
+     lands exactly on the rail.
+     ---------------------------------------------------------------------- */
+  .rail {
+    --rail-x: 4rem; /* distance from the rail box's left edge to the hairline */
+    position: relative;
+  }
+  .rail::before {
+    content: "";
+    position: absolute;
+    left: var(--rail-x);
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      rgb(var(--line) / 0),
+      rgb(var(--line)) 6%,
+      rgb(var(--line)) 94%,
+      rgb(var(--line) / 0)
+    );
+  }
+  .rail-tight {
+    --rail-x: 2rem;
+  }
+  .rail-row {
+    display: grid;
+    grid-template-columns: var(--rail-x) minmax(0, 1fr);
+    column-gap: 0.75rem;
+    align-items: start;
+  }
+  /* First cell: the index / timestamp. Mono, tabular, faint, right-aligned. */
+  .rail-time {
+    position: relative;
+    padding-right: 0.625rem;
+    text-align: right;
+    font-family: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.625rem;
+    line-height: 1.05rem;
+    letter-spacing: 0.1em;
+    font-variant-numeric: tabular-nums;
+    color: rgb(var(--faint));
+    white-space: nowrap;
+  }
+  /* The node marker. Place inside .rail-time; it centers itself on the rail. */
+  .rail-node {
+    --node: var(--line-strong);
+    position: absolute;
+    right: -2.5px;
+    top: 0.44rem;
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgb(var(--node));
+    box-shadow: 0 0 0 3px rgb(var(--surface));
+  }
+  .rail-node[data-tone="danger"] {
+    --node: var(--danger);
+    box-shadow: 0 0 0 3px rgb(var(--surface)), 0 0 10px 0 rgb(var(--danger) / 0.6);
+  }
+  .rail-node[data-tone="live"] {
+    --node: var(--live);
+    box-shadow: 0 0 0 3px rgb(var(--surface)), 0 0 10px 0 rgb(var(--live) / 0.55);
+  }
+  .rail-node[data-tone="accent"] {
+    --node: var(--accent);
+    box-shadow: 0 0 0 3px rgb(var(--surface)), 0 0 10px 0 rgb(var(--accent) / 0.5);
+  }
+  .rail-node[data-tone="success"] {
+    --node: var(--success);
+    box-shadow: 0 0 0 3px rgb(var(--surface)), 0 0 10px 0 rgb(var(--success) / 0.5);
+  }
+  .rail-node[data-tone="warning"] {
+    --node: var(--warning);
+    box-shadow: 0 0 0 3px rgb(var(--surface)), 0 0 10px 0 rgb(var(--warning) / 0.5);
+  }
+
+  /* ------------------------------------------------------------------------
+     SCAN-LINE SWEEP — the one "in flight" affordance. A thin luminous line
+     travelling the top edge of the active panel. One at a time on the page.
+     Uses ::after only, so it composes with .panel + .instrument-grid /
+     .core-bloom on the same element.
+     ---------------------------------------------------------------------- */
+  .scan-sweep {
+    --sweep: var(--live);
+    position: relative;
+  }
+  .scan-sweep::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 10px;
+    pointer-events: none;
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+    background-repeat: no-repeat;
+    background-image:
+      linear-gradient(90deg, rgb(var(--sweep) / 0) 0%, rgb(var(--sweep) / 0.95) 50%, rgb(var(--sweep) / 0) 100%),
+      linear-gradient(90deg, rgb(var(--sweep) / 0) 12%, rgb(var(--sweep) / 0.3) 50%, rgb(var(--sweep) / 0) 88%);
+    background-size: 40% 1px, 40% 9px;
+    background-position: -70% 0, -70% 0;
+    animation: scan-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+  .scan-sweep[data-tone="accent"] {
+    --sweep: var(--accent);
+  }
+  .scan-sweep[data-tone="danger"] {
+    --sweep: var(--danger);
+  }
+  .scan-sweep[data-tone="success"] {
+    --sweep: var(--success);
+  }
+
+  /* ------------------------------------------------------------------------
+     STATUS LED — never a flat rounded-full. Solid core, real bloom halo in its
+     own hue, slow breath when live. Drive with data-tone / data-pulse.
+     ---------------------------------------------------------------------- */
+  .led {
+    --led: var(--faint);
+    --led-size: 7px;
+    position: relative;
+    display: inline-block;
+    flex: none;
+    width: var(--led-size);
+    height: var(--led-size);
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 50% 34%, rgb(255 255 255 / var(--led-gloss)), rgb(var(--led) / 0) 62%),
+      rgb(var(--led));
+    box-shadow:
+      0 0 0 1px rgb(var(--led) / calc(0.25 * var(--led-halo))),
+      0 0 5px 0 rgb(var(--led) / calc(0.6 * var(--led-halo))),
+      0 0 13px 0 rgb(var(--led) / calc(0.32 * var(--led-halo)));
+  }
+  .led::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    background: rgb(var(--led) / 0.22);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .led[data-pulse="true"]::after {
+    animation: led-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  .led[data-tone="accent"] {
+    --led: var(--accent);
+  }
+  .led[data-tone="live"] {
+    --led: var(--live);
+  }
+  .led[data-tone="danger"] {
+    --led: var(--danger);
+  }
+  .led[data-tone="success"] {
+    --led: var(--success);
+  }
+  .led[data-tone="warning"] {
+    --led: var(--warning);
+  }
+  /* Neutral is an UNLIT lamp: no bloom, just a dark bead in a hairline socket. */
+  .led[data-tone="neutral"] {
+    --led: var(--faint);
+    background: rgb(var(--faint) / 0.4);
+    box-shadow: inset 0 0 0 1px rgb(var(--line-strong));
+  }
+  .led-lg {
+    --led-size: 9px;
+  }
+  .led-sm {
+    --led-size: 5px;
+  }
+
+  /* ------------------------------------------------------------------------
+     TYPE — mono is the voice of the machine.
+     ---------------------------------------------------------------------- */
+  /* Tabular figures on every number that can change. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+  /* The mono label above a technical stream, and every section heading in the
+     console. 11px, uppercase, 0.14em tracking, faint. */
+  .strip-label {
+    @apply font-mono text-label font-medium uppercase text-faint;
+  }
+  /* A telemetry value: mono, tabular, tight, muted. */
+  .telemetry {
+    @apply font-mono text-2xs tabular-nums text-muted;
+  }
+
+  /* ------------------------------------------------------------------------
+     CHROME
+     ---------------------------------------------------------------------- */
+  /* The luminous hairline under the top bar. Uses ::after. */
+  .chrome-edge {
+    position: relative;
+  }
+  .chrome-edge::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      rgb(var(--accent) / 0),
+      rgb(var(--accent) / 0.35) 16%,
+      rgb(var(--live) / 0.3) 50%,
+      rgb(var(--accent) / 0.35) 84%,
+      rgb(var(--accent) / 0)
+    );
+  }
+  /* Opt-in focus ring for elements that suppress the base outline. */
+  .focus-ring {
+    @apply outline-none;
+  }
+  .focus-ring:focus-visible {
+    @apply ring-2 ring-accent/60 ring-offset-2 ring-offset-bg;
+  }
+  /* Grain-free depth: a barely-there top glow behind the console. */
+  .console-veil {
+    background: radial-gradient(
+      120% 80% at 50% -12%,
+      rgb(var(--accent) / calc(0.055 * var(--bloom-k))),
+      transparent 62%
+    );
+  }
+}
+
+/* The moving highlight sweep used on the running-session indicator. */
+.sweep-bg {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(var(--accent) / 0.18) 45%,
+    rgb(var(--accent) / 0.18) 55%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+}
+
+/* Respect users who ask for less motion: nothing moves, nothing breathes, and
+   every ambient primitive resolves to a legible static state. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .core-bloom::before,
+  .led::after,
+  .scan-sweep::after {
+    animation: none !important;
+  }
+  .led::after {
+    opacity: 0 !important;
+  }
+  /* The sweep parks mid-panel as a static "in flight" mark. */
+  .scan-sweep::after {
+    background-position: 50% 0, 50% 0 !important;
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-07-24T00:00:00Z",
+  "zoo": {
+    "malicious": 25,
+    "benign": 25
+  },
+  "detection": {
+    "caught": 24,
+    "total": 25,
+    "rate": 0.96
+  },
+  "false_quarantine": {
+    "blocked": 0,
+    "total": 25,
+    "rate": 0
+  },
+  "static_blind": {
+    "reactor_caught": 24,
+    "static_caught": 15,
+    "static_blind_catches": 9,
+    "missed_by_both": 1,
+    "by_type": [
+      {
+        "type": "rug_pull",
+        "reactor": 3,
+        "static": 0
+      },
+      {
+        "type": "context_exfil",
+        "reactor": 2,
+        "static": 0
+      },
+      {
+        "type": "conditional_trigger",
+        "reactor": 2,
+        "static": 0
+      },
+      {
+        "type": "install_hook",
+        "reactor": 2,
+        "static": 0
+      }
+    ]
+  },
+  "redteam": {
+    "mutations": 40,
+    "escaped": 3,
+    "rate": 0.075
+  },
+  "time_to_verdict_ms": {
+    "mean": 41200,
+    "p50": 38400,
+    "p95": 71800
+  },
+  "cost_usd": {
+    "mean": 0.004,
+    "total": 0.19
+  },
+  "comparison": {
+    "static": {
+      "name": "mcp-scan",
+      "caught": 15,
+      "blind": 9,
+      "false_blocks": 0
+    },
+    "reactor": {
+      "name": "Reactor",
+      "caught": 24,
+      "false_blocks": 0
+    }
+  }
+}
